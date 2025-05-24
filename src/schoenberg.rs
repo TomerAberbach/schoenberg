@@ -1,0 +1,640 @@
+use indexmap::IndexSet;
+use midly::{
+    num::{u28, u7},
+    Format, Header, MidiMessage, Smf, Timing, Track, TrackEvent, TrackEventKind,
+};
+use std::{
+    collections::{HashMap, HashSet},
+    error, fmt,
+};
+
+/// A struct representing a compiled Schoenberg program.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Program {
+    tokens: Vec<Token>,
+    loop_boundary_indices: HashMap<usize, usize>,
+}
+
+impl Program {
+    const MEMORY_SIZE: usize = 30000;
+
+    /// Runs the program with the given `input` and returns the output.
+    pub fn run(&self, input: &str) -> String {
+        let input = input.as_bytes();
+        let mut input_pointer = 0;
+        let mut output = Vec::new();
+
+        let mut memory = [0u8; Self::MEMORY_SIZE];
+        let mut memory_pointer = 0;
+        let mut program_counter = 0;
+
+        while program_counter < self.tokens.len() {
+            let token = &self.tokens[program_counter];
+            match token {
+                Token::Decrement(amount) => {
+                    memory[memory_pointer] = memory[memory_pointer].wrapping_sub(*amount)
+                }
+                Token::Increment(amount) => {
+                    memory[memory_pointer] = memory[memory_pointer].wrapping_add(*amount)
+                }
+                Token::MoveLeft(amount) => {
+                    memory_pointer =
+                        (memory_pointer as usize).wrapping_sub((*amount).into()) % Self::MEMORY_SIZE
+                }
+                Token::MoveRight(amount) => {
+                    memory_pointer =
+                        memory_pointer.wrapping_add((*amount).into()) % Self::MEMORY_SIZE
+                }
+                Token::Output => output.push(memory[memory_pointer]),
+                Token::Input => {
+                    memory[memory_pointer] = match input.get(input_pointer) {
+                        Some(&input) => {
+                            input_pointer += 1;
+                            input
+                        }
+                        None => 0,
+                    }
+                }
+                Token::LoopStart => {
+                    if memory[memory_pointer] == 0 {
+                        program_counter = *self.loop_boundary_indices.get(&program_counter).unwrap()
+                    }
+                }
+                Token::LoopEnd => {
+                    if memory[memory_pointer] != 0 {
+                        program_counter = *self.loop_boundary_indices.get(&program_counter).unwrap()
+                    }
+                }
+            }
+            program_counter += 1
+        }
+
+        String::from_utf8_lossy(&output).into_owned()
+    }
+
+    /// Compiles a [Program] from the given `midi_bytes` or returns a
+    /// compilation error.
+    pub fn from_midi(midi_bytes: &[u8]) -> Result<Self, Error> {
+        let tokens: Vec<Token> = Self::tokenize(midi_bytes)?;
+        let loop_boundary_indices = Self::find_loop_boundaries(&tokens);
+        Ok(Program {
+            tokens,
+            loop_boundary_indices,
+        })
+    }
+
+    /// Compiles a [Program] from the given `bf` program.
+    ///
+    /// Any non-BF characters are filtered out so it's always possible to
+    /// compile a Schoenberg program.
+    pub fn from_bf(bf: &str) -> Program {
+        let mut tokens = Vec::new();
+
+        let mut chars = bf.chars().peekable();
+        while let Some(ch) = chars.next() {
+            match ch {
+                '+' => {
+                    let mut count = 1;
+                    while chars.peek() == Some(&'+') {
+                        chars.next();
+                        count += 1;
+                        if count == u8::MAX {
+                            break;
+                        }
+                    }
+                    tokens.push(Token::Increment(count));
+                }
+                '-' => {
+                    let mut count = 1;
+                    while chars.peek() == Some(&'-') {
+                        chars.next();
+                        count += 1;
+                        if count == u8::MAX {
+                            break;
+                        }
+                    }
+                    tokens.push(Token::Decrement(count));
+                }
+                '>' => {
+                    let mut count = 1;
+                    while chars.peek() == Some(&'>') {
+                        chars.next();
+                        count += 1;
+                        if count == u8::MAX {
+                            break;
+                        }
+                    }
+                    tokens.push(Token::MoveRight(count));
+                }
+                '<' => {
+                    let mut count = 1;
+                    while chars.peek() == Some(&'<') {
+                        chars.next();
+                        count += 1;
+                        if count == u8::MAX {
+                            break;
+                        }
+                    }
+                    tokens.push(Token::MoveLeft(count));
+                }
+                '.' => tokens.push(Token::Output),
+                ',' => tokens.push(Token::Input),
+                '[' => tokens.push(Token::LoopStart),
+                ']' => tokens.push(Token::LoopEnd),
+                _ => {}
+            }
+        }
+
+        let loop_boundary_indices = Self::find_loop_boundaries(&tokens);
+        Program {
+            tokens,
+            loop_boundary_indices,
+        }
+    }
+
+    fn tokenize(midi_bytes: &[u8]) -> Result<Vec<Token>, Error> {
+        let smf = Smf::parse(midi_bytes).map_err(Error::Parse)?;
+        if smf.header.format != midly::Format::SingleTrack {
+            return Err(Error::MultipleTracks(smf.tracks.len()));
+        }
+        let track = smf.tracks.first().expect("Should have validated one track");
+
+        let mut tokens = Vec::new();
+
+        let mut keys_on: IndexSet<u7> = IndexSet::new();
+        let mut last_keys_on: HashSet<u7> = HashSet::new();
+        let mut loop_keys_on: HashSet<u7> = HashSet::new();
+
+        for note in Self::extract_notes(&track) {
+            match note {
+                Note::On { delta, key, vel } => {
+                    if keys_on.insert(key) && keys_on.len() >= 2 + loop_keys_on.len() {
+                        if let Some(&loop_key) =
+                            keys_on.iter().find(|key| !loop_keys_on.contains(key))
+                        {
+                            loop_keys_on.insert(loop_key);
+                            tokens.push(Token::LoopStart);
+                        }
+                    }
+
+                    // If there's not just one last key, because multiple keys
+                    // were pressed at exactly the same time (delta=0), then we
+                    // consider the distance to the new key to be the shortest
+                    // one.
+                    let distance = last_keys_on
+                        .iter()
+                        .map(|&last_key| pitch_class_distance(key, last_key))
+                        .min()
+                        .unwrap_or(0);
+                    match distance {
+                        0 => {}
+                        1 => tokens.push(Token::Decrement((vel.as_int() + 1).div_ceil(32))),
+                        2 => tokens.push(Token::Increment((vel.as_int() + 1).div_ceil(32))),
+                        3 => tokens.push(Token::MoveLeft((vel.as_int() + 1).div_ceil(64))),
+                        4 => tokens.push(Token::MoveRight((vel.as_int() + 1).div_ceil(64))),
+                        5 => tokens.push(Token::Output),
+                        6 => tokens.push(Token::Input),
+                        _ => panic!("Impossible note distance"),
+                    };
+
+                    if delta > 0 {
+                        last_keys_on.clear();
+                    }
+                    last_keys_on.insert(key);
+                }
+                Note::Off { key } => {
+                    keys_on.shift_remove(&key);
+                    if loop_keys_on.remove(&key) {
+                        tokens.push(Token::LoopEnd);
+                    }
+                }
+            }
+        }
+
+        Ok(tokens)
+    }
+
+    fn extract_notes<'a>(track: &'a Track) -> Vec<Note> {
+        let mut notes = Vec::new();
+        // let mut note_offs = Vec::new();
+        // let mut note_ons = Vec::new();
+
+        for event in track {
+            let message = match event.kind {
+                TrackEventKind::Midi { message, .. } => message,
+                _ => continue,
+            };
+
+            // if event.delta > 0 {
+            //     notes.append(&mut note_offs);
+            //     notes.append(&mut note_ons);
+            // }
+
+            match message {
+                MidiMessage::NoteOff { key, .. } => notes.push(Note::Off { key }),
+                MidiMessage::NoteOn { key, vel } => notes.push(Note::On {
+                    delta: event.delta,
+                    key,
+                    vel,
+                }),
+                _ => {}
+            }
+        }
+
+        // notes.append(&mut note_offs);
+        // notes.append(&mut note_ons);
+
+        notes
+    }
+
+    fn find_loop_boundaries(tokens: &[Token]) -> HashMap<usize, usize> {
+        let mut loop_boundary_indices: HashMap<usize, usize> = HashMap::new();
+
+        let mut loop_start_indices = Vec::new();
+        for (index, token) in tokens.iter().enumerate() {
+            match token {
+                Token::LoopStart => loop_start_indices.push(index),
+                Token::LoopEnd => {
+                    let start_index = loop_start_indices.pop().expect("Impossible");
+                    loop_boundary_indices.insert(start_index, index);
+                    loop_boundary_indices.insert(index, start_index);
+                }
+                _ => {}
+            }
+        }
+        while let Some(start_index) = loop_start_indices.pop() {
+            loop_boundary_indices.insert(start_index, tokens.len());
+        }
+
+        loop_boundary_indices
+    }
+
+    pub fn to_midi(&self) -> Vec<u8> {
+        ProgramToMidiConverter::default().convert(self)
+    }
+
+    pub fn to_bf(&self) -> String {
+        let mut strings = Vec::new();
+        for token in self.tokens.iter() {
+            match token {
+                Token::Decrement(amount) => strings.push("-".repeat((*amount).into())),
+                Token::Increment(amount) => strings.push("+".repeat((*amount).into())),
+                Token::MoveLeft(amount) => strings.push("<".repeat((*amount).into())),
+                Token::MoveRight(amount) => strings.push(">".repeat((*amount).into())),
+                Token::Output => strings.push(".".to_string()),
+                Token::Input => strings.push(",".to_string()),
+                Token::LoopStart => strings.push("[".to_string()),
+                Token::LoopEnd => strings.push("]".to_string()),
+            }
+        }
+
+        strings.join("")
+    }
+}
+
+enum Note {
+    Off { key: u7 },
+    On { delta: u28, key: u7, vel: u7 },
+}
+
+fn pitch_class_distance(key1: u7, key2: u7) -> u8 {
+    let distance: u8 = pitch_class(key1).abs_diff(pitch_class(key2));
+    let alternate_distance = 12 - distance;
+    return distance.min(alternate_distance);
+}
+
+fn pitch_class(key: u7) -> u8 {
+    key.as_int() % 12
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Token {
+    Decrement(u8),
+    Increment(u8),
+    MoveLeft(u8),
+    MoveRight(u8),
+    Output,
+    Input,
+    LoopStart,
+    LoopEnd,
+}
+
+#[derive(Debug, Clone)]
+pub enum Error {
+    Parse(midly::Error),
+    MultipleTracks(usize),
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Error::Parse(error) => write!(f, "{}", error),
+            Error::MultipleTracks(count) => {
+                write!(f, "Only one track is allowed, but got {}", count)
+            }
+        }
+    }
+}
+
+impl error::Error for Error {}
+
+/// A struct for holding the current state of a [Program] to MIDI conversion.
+struct ProgramToMidiConverter<'a> {
+    next_delta: u28,
+    direction: Direction,
+    loop_keys: IndexSet<u7>,
+    keys_on: IndexSet<u7>,
+    track: Track<'a>,
+}
+
+enum Direction {
+    Down,
+    Up,
+}
+
+impl<'a> Default for ProgramToMidiConverter<'a> {
+    fn default() -> Self {
+        Self {
+            next_delta: 0.into(),
+            direction: Direction::Up,
+            loop_keys: IndexSet::new(),
+            keys_on: IndexSet::new(),
+            track: Track::new(),
+        }
+    }
+}
+
+impl<'a> ProgramToMidiConverter<'a> {
+    const DEFAULT_INITIAL_KEY: u7 = u7::new(64);
+    const DEFAULT_VEL: u7 = u7::new(63);
+    const DEFAULT_DELTA: u28 = u28::new(12);
+
+    fn convert(&mut self, program: &Program) -> Vec<u8> {
+        self.note_on(Self::DEFAULT_INITIAL_KEY, Self::DEFAULT_VEL);
+
+        let tokens = program
+            .tokens
+            .iter()
+            .flat_map(|&token| match token {
+                Token::Decrement(amount) => {
+                    let mut tokens = Vec::new();
+                    let mut current_amount = amount;
+                    while current_amount > 0 {
+                        let amount = 2.min(current_amount);
+                        current_amount -= amount;
+                        tokens.push(Token::Decrement(amount));
+                    }
+                    tokens
+                }
+                Token::Increment(amount) => {
+                    let mut tokens = Vec::new();
+                    let mut current_amount = amount;
+                    while current_amount > 0 {
+                        let amount = 2.min(current_amount);
+                        current_amount -= amount;
+                        tokens.push(Token::Increment(amount));
+                    }
+                    tokens
+                }
+                Token::MoveLeft(amount) => {
+                    let mut tokens = Vec::new();
+                    let mut current_amount = amount;
+                    while current_amount > 0 {
+                        let amount = 2.min(current_amount);
+                        current_amount -= amount;
+                        tokens.push(Token::MoveLeft(amount));
+                    }
+                    tokens
+                }
+                Token::MoveRight(amount) => {
+                    let mut tokens = Vec::new();
+                    let mut current_amount = amount;
+                    while current_amount > 0 {
+                        let amount = 2.min(current_amount);
+                        current_amount -= amount;
+                        tokens.push(Token::MoveRight(amount));
+                    }
+                    tokens
+                }
+                Token::Output => vec![token],
+                Token::Input => vec![token],
+                Token::LoopStart => vec![token],
+                Token::LoopEnd => vec![token],
+            })
+            .collect::<Vec<_>>();
+
+        for token in tokens.iter() {
+            match token {
+                Token::Decrement(amount) => {
+                    let next_key = self.next_key(1.into());
+                    if let Some(last_key) = self
+                        .keys_on
+                        .last()
+                        .filter(|&key| !self.loop_keys.contains(key))
+                    {
+                        self.note_off(*last_key);
+                    }
+                    self.note_on(next_key, (amount * 32 - 1).into());
+                }
+                Token::Increment(amount) => {
+                    let next_key = self.next_key(2.into());
+                    if let Some(last_key) = self
+                        .keys_on
+                        .last()
+                        .filter(|&key| !self.loop_keys.contains(key))
+                    {
+                        self.note_off(*last_key);
+                    }
+                    self.note_on(next_key, (amount * 32 - 1).into());
+                }
+                Token::MoveLeft(amount) => {
+                    let next_key = self.next_key(3.into());
+                    if let Some(last_key) = self
+                        .keys_on
+                        .last()
+                        .filter(|&key| !self.loop_keys.contains(key))
+                    {
+                        self.note_off(*last_key);
+                    }
+                    self.note_on(next_key, (amount * 64 - 1).into());
+                }
+                Token::MoveRight(amount) => {
+                    let next_key = self.next_key(4.into());
+                    if let Some(last_key) = self
+                        .keys_on
+                        .last()
+                        .filter(|&key| !self.loop_keys.contains(key))
+                    {
+                        self.note_off(*last_key);
+                    }
+                    self.note_on(next_key, (amount * 64 - 1).into());
+                }
+                Token::Output => {
+                    let next_key = self.next_key(5.into());
+                    if let Some(last_key) = self
+                        .keys_on
+                        .last()
+                        .filter(|&key| !self.loop_keys.contains(key))
+                    {
+                        self.note_off(*last_key);
+                    }
+                    self.note_on(next_key, 63.into());
+                }
+                Token::Input => {
+                    let next_key = self.next_key(6.into());
+                    if let Some(last_key) = self
+                        .keys_on
+                        .last()
+                        .filter(|&key| !self.loop_keys.contains(key))
+                    {
+                        self.note_off(*last_key);
+                    }
+                    self.note_on(next_key, 63.into());
+                }
+                Token::LoopStart => {
+                    let mut last_key = *self.keys_on.last().unwrap();
+                    if self.loop_keys.insert(last_key) {
+                        continue;
+                    }
+
+                    last_key += 12.into();
+                    while !self.loop_keys.insert(last_key) {
+                        last_key += 12.into();
+                    }
+                    self.note_on(last_key, Self::DEFAULT_VEL);
+                }
+                Token::LoopEnd => {
+                    if let Some(key) = self.loop_keys.pop() {
+                        self.note_off(key);
+                        self.next_delta = 0.into();
+                    }
+                }
+            }
+        }
+
+        while let Some(key) = self.keys_on.pop() {
+            self.note_off(key);
+            self.loop_keys.shift_remove(&key);
+        }
+        while let Some(key) = self.loop_keys.pop() {
+            self.note_off(key);
+        }
+
+        let header = Header {
+            format: Format::SingleTrack,
+            timing: Timing::Metrical(480.into()),
+        };
+
+        let smf = Smf {
+            header,
+            tracks: vec![self.track.clone()],
+        };
+
+        let mut midi_data = Vec::new();
+        smf.write(&mut midi_data).unwrap();
+        midi_data
+    }
+
+    fn next_key(&mut self, target_distance: u7) -> u7 {
+        let last_key = *self
+            .keys_on
+            .last()
+            .expect("Cannot choose next key without a previous key");
+
+        match self.direction {
+            Direction::Down => {
+                if last_key < 55 {
+                    self.direction = Direction::Up;
+                }
+            }
+            Direction::Up => {
+                if last_key > 105 {
+                    self.direction = Direction::Down;
+                }
+            }
+        }
+
+        match self.direction {
+            Direction::Down => {
+                last_key
+                    - (1..=11)
+                        .find(|&distance| {
+                            let next_key = last_key.as_int().saturating_sub(distance).into();
+                            !self.loop_keys.contains(&next_key)
+                                && pitch_class_distance(last_key, next_key) == target_distance
+                        })
+                        .unwrap()
+                        .into()
+            }
+            Direction::Up => {
+                last_key
+                    + (1..=11)
+                        .find(|&distance| {
+                            let next_key = last_key + distance.into();
+                            !self.loop_keys.contains(&next_key)
+                                && pitch_class_distance(last_key, next_key) == target_distance
+                        })
+                        .unwrap()
+                        .into()
+            }
+        }
+    }
+
+    fn note_on(&mut self, key: u7, vel: u7) {
+        self.track.push(TrackEvent {
+            delta: self.next_delta,
+            kind: TrackEventKind::Midi {
+                channel: 0.into(),
+                message: MidiMessage::NoteOn { key, vel },
+            },
+        });
+        if self.next_delta == 0 {
+            self.next_delta = Self::DEFAULT_DELTA;
+        }
+        self.keys_on.insert(key);
+    }
+
+    fn note_off(&mut self, key: u7) {
+        self.track.push(TrackEvent {
+            delta: self.next_delta,
+            kind: TrackEventKind::Midi {
+                channel: 0.into(),
+                message: MidiMessage::NoteOff {
+                    key,
+                    vel: 63.into(),
+                },
+            },
+        });
+        if self.next_delta == 0 {
+            self.next_delta = Self::DEFAULT_DELTA;
+        }
+        self.keys_on.shift_remove(&key);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_hello_world_bf_roundtrip() {
+        let bf = ">++++++++[<+++++++++>-]<.>++++[<+++++++>-]<+.+++++++..+++.>>++++++[<+++++++>-]<++.------------.>++++++[<+++++++++>-]<+.<.+++.------.--------.>>>++++[<++++++++>-]<+.";
+
+        let roundtripped_bf = Program::from_midi(&Program::from_bf(bf).to_midi())
+            .unwrap()
+            .to_bf();
+
+        assert_eq!(roundtripped_bf, bf);
+    }
+
+    #[test]
+    fn test_cell_width_bf_roundtrip() {
+        let bf = "++++++++[>++++++++<-]>[<++++>-]+<[>-<[>++++<-]>[<++++++++>-]<[>++++++++<-]+>[>++++++++++[>+++++<-]>+.-.[-]<<[-]<->]<[>>+++++++[>+++++++<-]>.+++++.[-]<<<-]]>[>++++++++[>+++++++<-]>.[-]<<-]<+++++++++++[>+++>+++++++++>+++++++++>+<<<<-]>-.>-.+++++++.+++++++++++.<.>>.++.+++++++..<-.>>-.[[-]<]";
+
+        let roundtripped_bf = Program::from_midi(&Program::from_bf(bf).to_midi())
+            .unwrap()
+            .to_bf();
+
+        assert_eq!(roundtripped_bf, bf);
+    }
+}
