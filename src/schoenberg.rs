@@ -433,6 +433,8 @@ impl<'a> ProgramToMidiConverter<'a> {
                         .filter(|&key| !self.loop_keys.contains(key))
                     {
                         self.note_off(*last_key);
+                    } else {
+                        self.next_delta = (Self::DEFAULT_DELTA.as_int() * 2).into();
                     }
                     self.note_on(next_key, (amount * 32 - 1).into());
                 }
@@ -444,6 +446,8 @@ impl<'a> ProgramToMidiConverter<'a> {
                         .filter(|&key| !self.loop_keys.contains(key))
                     {
                         self.note_off(*last_key);
+                    } else {
+                        self.next_delta = (Self::DEFAULT_DELTA.as_int() * 2).into();
                     }
                     self.note_on(next_key, (amount * 32 - 1).into());
                 }
@@ -455,6 +459,8 @@ impl<'a> ProgramToMidiConverter<'a> {
                         .filter(|&key| !self.loop_keys.contains(key))
                     {
                         self.note_off(*last_key);
+                    } else {
+                        self.next_delta = (Self::DEFAULT_DELTA.as_int() * 2).into();
                     }
                     self.note_on(next_key, (amount * 64 - 1).into());
                 }
@@ -466,6 +472,8 @@ impl<'a> ProgramToMidiConverter<'a> {
                         .filter(|&key| !self.loop_keys.contains(key))
                     {
                         self.note_off(*last_key);
+                    } else {
+                        self.next_delta = (Self::DEFAULT_DELTA.as_int() * 2).into();
                     }
                     self.note_on(next_key, (amount * 64 - 1).into());
                 }
@@ -477,6 +485,8 @@ impl<'a> ProgramToMidiConverter<'a> {
                         .filter(|&key| !self.loop_keys.contains(key))
                     {
                         self.note_off(*last_key);
+                    } else {
+                        self.next_delta = (Self::DEFAULT_DELTA.as_int() * 2).into();
                     }
                     self.note_on(next_key, 63.into());
                 }
@@ -488,6 +498,8 @@ impl<'a> ProgramToMidiConverter<'a> {
                         .filter(|&key| !self.loop_keys.contains(key))
                     {
                         self.note_off(*last_key);
+                    } else {
+                        self.next_delta = (Self::DEFAULT_DELTA.as_int() * 2).into();
                     }
                     self.note_on(next_key, 63.into());
                 }
