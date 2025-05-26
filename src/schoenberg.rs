@@ -42,7 +42,7 @@ impl Program {
                 }
                 Token::MoveLeft(amount) => {
                     memory_pointer =
-                        (memory_pointer as usize).wrapping_sub((*amount).into()) % Self::MEMORY_SIZE
+                        memory_pointer.wrapping_sub((*amount).into()) % Self::MEMORY_SIZE
                 }
                 Token::MoveRight(amount) => {
                     memory_pointer =
@@ -145,7 +145,7 @@ impl Program {
         let mut last_keys_on: HashSet<u7> = HashSet::new();
         let mut loop_keys_on: HashSet<u7> = HashSet::new();
 
-        for note in Self::extract_notes(&track) {
+        for note in Self::extract_notes(track) {
             match note {
                 Note::On { delta, key, vel } => {
                     if keys_on.insert(key) && keys_on.len() >= 2 + loop_keys_on.len() {
@@ -199,7 +199,7 @@ impl Program {
     ///
     /// Sorts adjacent note offs before note ons when they are at the same exact
     /// delta, so that the order of note offs and note ons is deterministic.
-    fn extract_notes<'a>(track: &'a Track) -> Vec<Note> {
+    fn extract_notes(track: &Track) -> Vec<Note> {
         let mut notes = Vec::new();
         let mut note_offs = Vec::new();
         let mut note_ons = Vec::new();
@@ -293,7 +293,7 @@ enum Note {
 fn pitch_class_distance(key1: u7, key2: u7) -> u8 {
     let distance: u8 = pitch_class(key1).abs_diff(pitch_class(key2));
     let alternate_distance = 12 - distance;
-    return distance.min(alternate_distance);
+    distance.min(alternate_distance)
 }
 
 /// Returns the pitch class of a key, which is the key's value modulo 12.
@@ -348,7 +348,7 @@ enum Direction {
     Up,
 }
 
-impl<'a> Default for ProgramToMidiConverter<'a> {
+impl Default for ProgramToMidiConverter<'_> {
     fn default() -> Self {
         Self {
             next_delta: 0.into(),
@@ -360,7 +360,7 @@ impl<'a> Default for ProgramToMidiConverter<'a> {
     }
 }
 
-impl<'a> ProgramToMidiConverter<'a> {
+impl ProgramToMidiConverter<'_> {
     const DEFAULT_INITIAL_KEY: u7 = u7::new(64);
     const DEFAULT_VEL: u7 = u7::new(63);
     const DEFAULT_DELTA: u28 = u28::new(12);
@@ -574,9 +574,7 @@ impl<'a> ProgramToMidiConverter<'a> {
                     }
                 }
                 .into()
-            })
-            .filter(|next_key| !self.loop_keys.contains(next_key))
-            .next()
+            }).find(|next_key| !self.loop_keys.contains(next_key))
             .unwrap()
     }
 
