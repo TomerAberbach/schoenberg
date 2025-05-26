@@ -574,7 +574,8 @@ impl ProgramToMidiConverter<'_> {
                     }
                 }
                 .into()
-            }).find(|next_key| !self.loop_keys.contains(next_key))
+            })
+            .find(|next_key| !self.loop_keys.contains(next_key))
             .unwrap()
     }
 
