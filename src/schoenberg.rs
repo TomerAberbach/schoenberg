@@ -544,48 +544,60 @@ impl<'a> ProgramToMidiConverter<'a> {
     }
 
     fn next_key(&mut self, target_distance: u7) -> u7 {
-        let last_key = *self
+        let last_key = self
             .keys_on
             .last()
             .expect("Cannot choose next key without a previous key");
-
         match self.direction {
             Direction::Down => {
-                if last_key < 55 {
+                if *last_key < 55 {
                     self.direction = Direction::Up;
                 }
             }
             Direction::Up => {
-                if last_key > 105 {
+                if *last_key > 105 {
                     self.direction = Direction::Down;
                 }
             }
         }
 
-        match self.direction {
-            Direction::Down => {
-                last_key
-                    - (1..=11)
-                        .find(|&distance| {
-                            let next_key = last_key.as_int().saturating_sub(distance).into();
-                            !self.loop_keys.contains(&next_key)
-                                && pitch_class_distance(last_key, next_key) == target_distance
-                        })
-                        .unwrap()
-                        .into()
-            }
-            Direction::Up => {
-                last_key
-                    + (1..=11)
-                        .find(|&distance| {
-                            let next_key = last_key + distance.into();
-                            !self.loop_keys.contains(&next_key)
-                                && pitch_class_distance(last_key, next_key) == target_distance
-                        })
-                        .unwrap()
-                        .into()
-            }
-        }
+        let next_key_downs =
+            (1..=11).map(|distance| last_key.as_int().saturating_sub(distance).into());
+        let next_key_ups = (1..=11).map(|distance| *last_key + distance.into());
+        let next_keys: Vec<_> = match self.direction {
+            Direction::Down => next_key_downs.chain(next_key_ups).collect(),
+            Direction::Up => next_key_ups.chain(next_key_downs).collect(),
+        };
+
+        next_keys
+            .iter()
+            .filter(|&next_key| pitch_class_distance(*last_key, *next_key) == target_distance)
+            .cycle()
+            .enumerate()
+            .map(|(index, next_key)| {
+                let cycle_index = (index / next_keys.len()) as u8;
+                let delta = cycle_index * 12;
+                match self.direction {
+                    Direction::Down => {
+                        if cycle_index % 2 == 0 {
+                            next_key.as_int() + delta
+                        } else {
+                            next_key.as_int() - delta
+                        }
+                    }
+                    Direction::Up => {
+                        if cycle_index % 2 == 0 {
+                            next_key.as_int() - delta
+                        } else {
+                            next_key.as_int() + delta
+                        }
+                    }
+                }
+                .into()
+            })
+            .filter(|next_key| !self.loop_keys.contains(next_key))
+            .next()
+            .unwrap()
     }
 
     fn note_on(&mut self, key: u7, vel: u7) {
@@ -623,6 +635,7 @@ impl<'a> ProgramToMidiConverter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn test_hello_world_bf_roundtrip() {
@@ -644,5 +657,31 @@ mod tests {
             .to_bf();
 
         assert_eq!(roundtripped_bf, bf);
+    }
+
+    fn bf_strategy() -> impl Strategy<Value = String> {
+        let char = prop_oneof![
+            Just("+".to_string()),
+            Just("-".to_string()),
+            Just(">".to_string()),
+            Just("<".to_string()),
+            Just(".".to_string()),
+            Just(",".to_string()),
+        ];
+        char.prop_recursive(8, 30, 5, |inner| {
+            prop::collection::vec(inner.clone(), 1..=10)
+                .prop_map(|chars| ["[", &chars.join(""), "]"].join(""))
+        })
+    }
+
+    proptest! {
+        #[test]
+        fn test_bf_roundtrip_property(bf in bf_strategy()) {
+            let roundtripped_bf = Program::from_midi(&Program::from_bf(&bf).to_midi())
+                .unwrap()
+                .to_bf();
+
+            prop_assert_eq!(roundtripped_bf, bf);
+        }
     }
 }
