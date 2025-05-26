@@ -13,7 +13,7 @@ use std::{
 pub struct Program {
     /// The tokens of the program, which are the instructions to be executed.
     tokens: Vec<Token>,
-    /// A map from loop start and end `tokens` indices in to loop end and start
+    /// A map from loop start and end `tokens` indices to loop end and start
     /// `tokens` indices, respectively.
     loop_boundary_indices: HashMap<usize, usize>,
 }
@@ -97,6 +97,8 @@ impl Program {
         while let Some(ch) = chars.next() {
             match ch {
                 '+' | '-' | '>' | '<' => {
+                    // Merge consecutive characters into a single token with the
+                    // count.
                     let mut count = 1;
                     while chars.peek() == Some(&ch) {
                         chars.next();
@@ -122,12 +124,14 @@ impl Program {
         }
 
         let loop_boundary_indices = Self::find_loop_boundaries(&tokens);
-        Program {
+        Self {
             tokens,
             loop_boundary_indices,
         }
     }
 
+    /// Parses the given `midi_bytes` and extracts the tokens from the MIDI, or
+    /// returns an error.
     fn tokenize(midi_bytes: &[u8]) -> Result<Vec<Token>, Error> {
         let smf = Smf::parse(midi_bytes).map_err(Error::Parse)?;
         if smf.header.format != midly::Format::SingleTrack {
@@ -190,10 +194,15 @@ impl Program {
         Ok(tokens)
     }
 
+    /// Extracts the notes from the given `track` and returns them as a vector
+    /// of [Note]s.
+    ///
+    /// Sorts adjacent note offs before note ons when they are at the same exact
+    /// delta, so that the order of note offs and note ons is deterministic.
     fn extract_notes<'a>(track: &'a Track) -> Vec<Note> {
         let mut notes = Vec::new();
-        // let mut note_offs = Vec::new();
-        // let mut note_ons = Vec::new();
+        let mut note_offs = Vec::new();
+        let mut note_ons = Vec::new();
 
         for event in track {
             let message = match event.kind {
@@ -201,10 +210,10 @@ impl Program {
                 _ => continue,
             };
 
-            // if event.delta > 0 {
-            //     notes.append(&mut note_offs);
-            //     notes.append(&mut note_ons);
-            // }
+            if event.delta > 0 {
+                notes.append(&mut note_offs);
+                notes.append(&mut note_ons);
+            }
 
             match message {
                 MidiMessage::NoteOff { key, .. } => notes.push(Note::Off { key }),
@@ -217,12 +226,16 @@ impl Program {
             }
         }
 
-        // notes.append(&mut note_offs);
-        // notes.append(&mut note_ons);
+        notes.append(&mut note_offs);
+        notes.append(&mut note_ons);
 
         notes
     }
 
+    /// Returns a map from loop start and end `tokens` indices to loop end and
+    /// start `tokens` indices, respectively.
+    ///
+    /// Panics if there are unmatched loop start or end tokens.
     fn find_loop_boundaries(tokens: &[Token]) -> HashMap<usize, usize> {
         let mut loop_boundary_indices: HashMap<usize, usize> = HashMap::new();
 
@@ -231,24 +244,27 @@ impl Program {
             match token {
                 Token::LoopStart => loop_start_indices.push(index),
                 Token::LoopEnd => {
-                    let start_index = loop_start_indices.pop().expect("Impossible");
+                    let start_index = loop_start_indices.pop().expect("Loop end without start");
                     loop_boundary_indices.insert(start_index, index);
                     loop_boundary_indices.insert(index, start_index);
                 }
                 _ => {}
             }
         }
-        while let Some(start_index) = loop_start_indices.pop() {
-            loop_boundary_indices.insert(start_index, tokens.len());
+
+        if !loop_start_indices.is_empty() {
+            panic!("Loop start without end");
         }
 
         loop_boundary_indices
     }
 
+    /// Converts the [Program] to MIDI bytes.
     pub fn to_midi(&self) -> Vec<u8> {
         ProgramToMidiConverter::default().convert(self)
     }
 
+    /// Converts the [Program] to a BF program string.
     pub fn to_bf(&self) -> String {
         let mut strings = Vec::new();
         for token in self.tokens.iter() {
