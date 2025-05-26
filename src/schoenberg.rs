@@ -11,7 +11,10 @@ use std::{
 /// A struct representing a compiled Schoenberg program.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Program {
+    /// The tokens of the program, which are the instructions to be executed.
     tokens: Vec<Token>,
+    /// A map from loop start and end `tokens` indices in to loop end and start
+    /// `tokens` indices, respectively.
     loop_boundary_indices: HashMap<usize, usize>,
 }
 
@@ -93,49 +96,22 @@ impl Program {
         let mut chars = bf.chars().peekable();
         while let Some(ch) = chars.next() {
             match ch {
-                '+' => {
+                '+' | '-' | '>' | '<' => {
                     let mut count = 1;
-                    while chars.peek() == Some(&'+') {
+                    while chars.peek() == Some(&ch) {
                         chars.next();
                         count += 1;
                         if count == u8::MAX {
                             break;
                         }
                     }
-                    tokens.push(Token::Increment(count));
-                }
-                '-' => {
-                    let mut count = 1;
-                    while chars.peek() == Some(&'-') {
-                        chars.next();
-                        count += 1;
-                        if count == u8::MAX {
-                            break;
-                        }
-                    }
-                    tokens.push(Token::Decrement(count));
-                }
-                '>' => {
-                    let mut count = 1;
-                    while chars.peek() == Some(&'>') {
-                        chars.next();
-                        count += 1;
-                        if count == u8::MAX {
-                            break;
-                        }
-                    }
-                    tokens.push(Token::MoveRight(count));
-                }
-                '<' => {
-                    let mut count = 1;
-                    while chars.peek() == Some(&'<') {
-                        chars.next();
-                        count += 1;
-                        if count == u8::MAX {
-                            break;
-                        }
-                    }
-                    tokens.push(Token::MoveLeft(count));
+                    tokens.push(match ch {
+                        '+' => Token::Increment(count),
+                        '-' => Token::Decrement(count),
+                        '>' => Token::MoveRight(count),
+                        '<' => Token::MoveLeft(count),
+                        _ => unreachable!(),
+                    });
                 }
                 '.' => tokens.push(Token::Output),
                 ',' => tokens.push(Token::Input),
