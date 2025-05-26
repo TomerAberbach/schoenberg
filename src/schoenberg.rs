@@ -289,16 +289,19 @@ enum Note {
     On { delta: u28, key: u7, vel: u7 },
 }
 
+/// Calculates the pitch class distance between two keys.
 fn pitch_class_distance(key1: u7, key2: u7) -> u8 {
     let distance: u8 = pitch_class(key1).abs_diff(pitch_class(key2));
     let alternate_distance = 12 - distance;
     return distance.min(alternate_distance);
 }
 
+/// Returns the pitch class of a key, which is the key's value modulo 12.
 fn pitch_class(key: u7) -> u8 {
     key.as_int() % 12
 }
 
+/// A token representing a single instruction in a Schoenberg program.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Token {
     Decrement(u8),
@@ -311,6 +314,7 @@ enum Token {
     LoopEnd,
 }
 
+/// An error that can occur when compiling MIDI bytes to a [Program].
 #[derive(Debug, Clone)]
 pub enum Error {
     Parse(midly::Error),
