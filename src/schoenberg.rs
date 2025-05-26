@@ -368,58 +368,7 @@ impl<'a> ProgramToMidiConverter<'a> {
     fn convert(&mut self, program: &Program) -> Vec<u8> {
         self.note_on(Self::DEFAULT_INITIAL_KEY, Self::DEFAULT_VEL);
 
-        let tokens = program
-            .tokens
-            .iter()
-            .flat_map(|&token| match token {
-                Token::Decrement(amount) => {
-                    let mut tokens = Vec::new();
-                    let mut current_amount = amount;
-                    while current_amount > 0 {
-                        let amount = 2.min(current_amount);
-                        current_amount -= amount;
-                        tokens.push(Token::Decrement(amount));
-                    }
-                    tokens
-                }
-                Token::Increment(amount) => {
-                    let mut tokens = Vec::new();
-                    let mut current_amount = amount;
-                    while current_amount > 0 {
-                        let amount = 2.min(current_amount);
-                        current_amount -= amount;
-                        tokens.push(Token::Increment(amount));
-                    }
-                    tokens
-                }
-                Token::MoveLeft(amount) => {
-                    let mut tokens = Vec::new();
-                    let mut current_amount = amount;
-                    while current_amount > 0 {
-                        let amount = 2.min(current_amount);
-                        current_amount -= amount;
-                        tokens.push(Token::MoveLeft(amount));
-                    }
-                    tokens
-                }
-                Token::MoveRight(amount) => {
-                    let mut tokens = Vec::new();
-                    let mut current_amount = amount;
-                    while current_amount > 0 {
-                        let amount = 2.min(current_amount);
-                        current_amount -= amount;
-                        tokens.push(Token::MoveRight(amount));
-                    }
-                    tokens
-                }
-                Token::Output => vec![token],
-                Token::Input => vec![token],
-                Token::LoopStart => vec![token],
-                Token::LoopEnd => vec![token],
-            })
-            .collect::<Vec<_>>();
-
-        for token in tokens.iter() {
+        for token in Self::split_program_tokens(program).iter() {
             match token {
                 Token::Decrement(amount) => {
                     let next_key = self.next_key(1.into());
@@ -541,6 +490,37 @@ impl<'a> ProgramToMidiConverter<'a> {
         let mut midi_data = Vec::new();
         smf.write(&mut midi_data).unwrap();
         midi_data
+    }
+
+    fn split_program_tokens(program: &Program) -> Vec<Token> {
+        program
+            .tokens
+            .iter()
+            // Split large increments into smaller increments so that each token
+            // can be represented by a single MIDI note, and isn't too loud.
+            .flat_map(|&token| match token {
+                Token::Decrement(amount)
+                | Token::Increment(amount)
+                | Token::MoveLeft(amount)
+                | Token::MoveRight(amount) => {
+                    let mut tokens = Vec::new();
+                    let mut current_amount = amount;
+                    while current_amount > 0 {
+                        let amount = 2.min(current_amount);
+                        current_amount -= amount;
+                        tokens.push(match token {
+                            Token::Decrement(_) => Token::Decrement(amount),
+                            Token::Increment(_) => Token::Increment(amount),
+                            Token::MoveLeft(_) => Token::MoveLeft(amount),
+                            Token::MoveRight(_) => Token::MoveRight(amount),
+                            _ => unreachable!(),
+                        });
+                    }
+                    tokens
+                }
+                _ => vec![token],
+            })
+            .collect::<Vec<_>>()
     }
 
     fn next_key(&mut self, target_distance: u7) -> u7 {
