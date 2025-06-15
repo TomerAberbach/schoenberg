@@ -335,12 +335,20 @@ impl fmt::Display for Error {
 impl error::Error for Error {}
 
 /// A struct for holding the current state of a [Program] to MIDI conversion.
-struct ProgramToMidiConverter<'a> {
-    next_delta: u28,
+struct ProgramToMidiConverter {
     direction: Direction,
     loop_keys: IndexSet<u7>,
-    keys_on: IndexSet<u7>,
-    track: Track<'a>,
+    timestamp: u28,
+    midi_notes: HashMap<u7, Vec<MidiNote>>,
+    last_key: u7,
+}
+
+/// A struct representing a key that was pressed and released.
+struct MidiNote {
+    key: u7,
+    vel: u7,
+    start: u28,
+    end: u28,
 }
 
 enum Direction {
@@ -348,19 +356,19 @@ enum Direction {
     Up,
 }
 
-impl Default for ProgramToMidiConverter<'_> {
+impl Default for ProgramToMidiConverter {
     fn default() -> Self {
         Self {
-            next_delta: 0.into(),
             direction: Direction::Up,
             loop_keys: IndexSet::new(),
-            keys_on: IndexSet::new(),
-            track: Track::new(),
+            timestamp: 0.into(),
+            midi_notes: HashMap::new(),
+            last_key: 0.into(),
         }
     }
 }
 
-impl ProgramToMidiConverter<'_> {
+impl ProgramToMidiConverter {
     const DEFAULT_INITIAL_KEY: u7 = u7::new(64);
     const DEFAULT_VEL: u7 = u7::new(63);
     const DEFAULT_DELTA: u28 = u28::new(12);
@@ -372,84 +380,30 @@ impl ProgramToMidiConverter<'_> {
             match token {
                 Token::Decrement(amount) => {
                     let next_key = self.next_key(1.into());
-                    if let Some(last_key) = self
-                        .keys_on
-                        .last()
-                        .filter(|&key| !self.loop_keys.contains(key))
-                    {
-                        self.note_off(*last_key);
-                    } else {
-                        self.next_delta = (Self::DEFAULT_DELTA.as_int() * 2).into();
-                    }
                     self.note_on(next_key, (amount * 32 - 1).into());
                 }
                 Token::Increment(amount) => {
                     let next_key = self.next_key(2.into());
-                    if let Some(last_key) = self
-                        .keys_on
-                        .last()
-                        .filter(|&key| !self.loop_keys.contains(key))
-                    {
-                        self.note_off(*last_key);
-                    } else {
-                        self.next_delta = (Self::DEFAULT_DELTA.as_int() * 2).into();
-                    }
                     self.note_on(next_key, (amount * 32 - 1).into());
                 }
                 Token::MoveLeft(amount) => {
                     let next_key = self.next_key(3.into());
-                    if let Some(last_key) = self
-                        .keys_on
-                        .last()
-                        .filter(|&key| !self.loop_keys.contains(key))
-                    {
-                        self.note_off(*last_key);
-                    } else {
-                        self.next_delta = (Self::DEFAULT_DELTA.as_int() * 2).into();
-                    }
                     self.note_on(next_key, (amount * 64 - 1).into());
                 }
                 Token::MoveRight(amount) => {
                     let next_key = self.next_key(4.into());
-                    if let Some(last_key) = self
-                        .keys_on
-                        .last()
-                        .filter(|&key| !self.loop_keys.contains(key))
-                    {
-                        self.note_off(*last_key);
-                    } else {
-                        self.next_delta = (Self::DEFAULT_DELTA.as_int() * 2).into();
-                    }
                     self.note_on(next_key, (amount * 64 - 1).into());
                 }
                 Token::Output => {
                     let next_key = self.next_key(5.into());
-                    if let Some(last_key) = self
-                        .keys_on
-                        .last()
-                        .filter(|&key| !self.loop_keys.contains(key))
-                    {
-                        self.note_off(*last_key);
-                    } else {
-                        self.next_delta = (Self::DEFAULT_DELTA.as_int() * 2).into();
-                    }
                     self.note_on(next_key, 63.into());
                 }
                 Token::Input => {
                     let next_key = self.next_key(6.into());
-                    if let Some(last_key) = self
-                        .keys_on
-                        .last()
-                        .filter(|&key| !self.loop_keys.contains(key))
-                    {
-                        self.note_off(*last_key);
-                    } else {
-                        self.next_delta = (Self::DEFAULT_DELTA.as_int() * 2).into();
-                    }
                     self.note_on(next_key, 63.into());
                 }
                 Token::LoopStart => {
-                    let mut last_key = *self.keys_on.last().unwrap();
+                    let mut last_key = self.last_key;
                     if self.loop_keys.insert(last_key) {
                         continue;
                     }
@@ -461,20 +415,50 @@ impl ProgramToMidiConverter<'_> {
                     self.note_on(last_key, Self::DEFAULT_VEL);
                 }
                 Token::LoopEnd => {
-                    if let Some(key) = self.loop_keys.pop() {
-                        self.note_off(key);
-                        self.next_delta = 0.into();
-                    }
+                    self.loop_keys.pop();
                 }
+            }
+
+            for loop_key in self.loop_keys.clone() {
+                self.note_continue(loop_key);
             }
         }
 
-        while let Some(key) = self.keys_on.pop() {
-            self.note_off(key);
-            self.loop_keys.shift_remove(&key);
-        }
-        while let Some(key) = self.loop_keys.pop() {
-            self.note_off(key);
+        let mut track: Track = self
+            .midi_notes
+            .values()
+            .flatten()
+            .flat_map(|midi_note| {
+                vec![
+                    TrackEvent {
+                        delta: midi_note.start,
+                        kind: TrackEventKind::Midi {
+                            channel: 0.into(),
+                            message: MidiMessage::NoteOn {
+                                key: midi_note.key,
+                                vel: midi_note.vel,
+                            },
+                        },
+                    },
+                    TrackEvent {
+                        delta: midi_note.end,
+                        kind: TrackEventKind::Midi {
+                            channel: 0.into(),
+                            message: MidiMessage::NoteOff {
+                                key: midi_note.key,
+                                vel: midi_note.vel,
+                            },
+                        },
+                    },
+                ]
+            })
+            .collect();
+        track.sort_by_key(|event| event.delta);
+        let mut timestamp = 0.into();
+        for event in &mut track {
+            let delta = event.delta;
+            event.delta -= timestamp;
+            timestamp = delta;
         }
 
         let header = Header {
@@ -484,7 +468,7 @@ impl ProgramToMidiConverter<'_> {
 
         let smf = Smf {
             header,
-            tracks: vec![self.track.clone()],
+            tracks: vec![track],
         };
 
         let mut midi_data = Vec::new();
@@ -524,18 +508,15 @@ impl ProgramToMidiConverter<'_> {
     }
 
     fn next_key(&mut self, target_distance: u7) -> u7 {
-        let last_key = self
-            .keys_on
-            .last()
-            .expect("Cannot choose next key without a previous key");
+        let last_key = self.last_key;
         match self.direction {
             Direction::Down => {
-                if *last_key < 55 {
+                if last_key < 55 {
                     self.direction = Direction::Up;
                 }
             }
             Direction::Up => {
-                if *last_key > 105 {
+                if last_key > 105 {
                     self.direction = Direction::Down;
                 }
             }
@@ -543,7 +524,7 @@ impl ProgramToMidiConverter<'_> {
 
         let next_key_downs =
             (1..=11).map(|distance| last_key.as_int().saturating_sub(distance).into());
-        let next_key_ups = (1..=11).map(|distance| *last_key + distance.into());
+        let next_key_ups = (1..=11).map(|distance| last_key + distance.into());
         let next_keys: Vec<_> = match self.direction {
             Direction::Down => next_key_downs.chain(next_key_ups).collect(),
             Direction::Up => next_key_ups.chain(next_key_downs).collect(),
@@ -551,7 +532,7 @@ impl ProgramToMidiConverter<'_> {
 
         next_keys
             .iter()
-            .filter(|&next_key| pitch_class_distance(*last_key, *next_key) == target_distance)
+            .filter(|&next_key| pitch_class_distance(last_key, *next_key) == target_distance)
             .cycle()
             .enumerate()
             .map(|(index, next_key)| {
@@ -580,34 +561,27 @@ impl ProgramToMidiConverter<'_> {
     }
 
     fn note_on(&mut self, key: u7, vel: u7) {
-        self.track.push(TrackEvent {
-            delta: self.next_delta,
-            kind: TrackEventKind::Midi {
-                channel: 0.into(),
-                message: MidiMessage::NoteOn { key, vel },
-            },
+        let start = self.timestamp;
+        self.timestamp += Self::DEFAULT_DELTA;
+        let end = self.timestamp;
+        self.timestamp += Self::DEFAULT_DELTA;
+        self.midi_notes.entry(key).or_default().push(MidiNote {
+            key,
+            vel,
+            start,
+            end,
         });
-        if self.next_delta == 0 {
-            self.next_delta = Self::DEFAULT_DELTA;
-        }
-        self.keys_on.insert(key);
+        self.last_key = key;
     }
 
-    fn note_off(&mut self, key: u7) {
-        self.track.push(TrackEvent {
-            delta: self.next_delta,
-            kind: TrackEventKind::Midi {
-                channel: 0.into(),
-                message: MidiMessage::NoteOff {
-                    key,
-                    vel: 63.into(),
-                },
-            },
-        });
-        if self.next_delta == 0 {
-            self.next_delta = Self::DEFAULT_DELTA;
+    fn note_continue(&mut self, key: u7) {
+        if let Some(midi_note) = self
+            .midi_notes
+            .get_mut(&key)
+            .and_then(|midi_notes| midi_notes.last_mut())
+        {
+            midi_note.end = self.timestamp - Self::DEFAULT_DELTA;
         }
-        self.keys_on.shift_remove(&key);
     }
 }
 
