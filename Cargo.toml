@@ -1,6 +1,14 @@
 [package]
 name = "schoenberg"
 version = "0.1.0"
+authors = ["Tomer Aberbach <tomer@aberba.ch>"]
+license = "MIT"
+description = "The MIDI Esoteric Programming Language"
+readme = "readme.md"
+homepage = "https://tomeraberba.ch/schoenberg"
+repository = "https://github.com/TomerAberbach/schoenberg"
+keywords = ["brainfuck", "cli", "esolang", "esoteric", "midi"]
+categories = ["command-line-utilities"]
 edition = "2021"
 
 [dependencies]

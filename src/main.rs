@@ -39,7 +39,7 @@ enum Subcommand {
         #[arg(long = "bpm", short = 'b', default_value_t = 140)]
         bpm: u32,
     },
-    /// Convert Schoenberg MIDI program to a BF program.
+    /// Convert a Schoenberg MIDI program to a BF program.
     ToBf {
         /// Path to the Schoenberg MIDI program, or stdin.
         #[arg(default_value = "-")]
