@@ -444,9 +444,10 @@ impl ProgramToMidiConverter {
             format: Format::SingleTrack,
             timing: Timing::Metrical(Self::TICKS_PER_QUARTER.into()),
         };
+        let bf = program.to_bf();
         let smf = Smf {
             header,
-            tracks: vec![self.track()],
+            tracks: vec![self.track(&bf)],
         };
 
         let mut midi_data = Vec::new();
@@ -565,11 +566,15 @@ impl ProgramToMidiConverter {
     }
 
     /// Builds a MIDI [Track] from the played notes.
-    fn track(&self) -> Track {
+    fn track<'a>(&self, bf: &'a str) -> Track<'a> {
         let mut track = vec![
             TrackEvent {
                 delta: 0.into(),
                 kind: TrackEventKind::Meta(MetaMessage::ProgramName(b"Schoenberg")),
+            },
+            TrackEvent {
+                delta: 0.into(),
+                kind: TrackEventKind::Meta(MetaMessage::TrackName(bf.as_bytes())),
             },
             TrackEvent {
                 delta: 0.into(),
