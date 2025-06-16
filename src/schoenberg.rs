@@ -339,12 +339,13 @@ impl error::Error for Error {}
 /// A struct for holding the current state of a [Program] to MIDI conversion.
 struct ProgramToMidiConverter {
     timestamp: u28,
-    midi_notes: HashMap<u7, Vec<NoteRange>>,
-    last_key: u7,
+    midi_note_ranges: HashMap<u7, Vec<NoteRange>>,
+    last_note_range: NoteRange,
     loop_keys: IndexSet<u7>,
 }
 
 /// A struct representing a key that was pressed and released.
+#[derive(Debug, Clone)]
 struct NoteRange {
     key: u7,
     vel: u7,
@@ -356,8 +357,13 @@ impl Default for ProgramToMidiConverter {
     fn default() -> Self {
         Self {
             timestamp: 0.into(),
-            midi_notes: HashMap::new(),
-            last_key: 0.into(),
+            midi_note_ranges: HashMap::new(),
+            last_note_range: NoteRange {
+                key: 0.into(),
+                vel: 0.into(),
+                start: 0.into(),
+                end: 0.into(),
+            },
             loop_keys: IndexSet::new(),
         }
     }
@@ -425,7 +431,8 @@ impl ProgramToMidiConverter {
                     self.note_on(next_key, Self::DEFAULT_VEL);
                 }
                 Token::LoopStart => {
-                    if self.loop_keys.insert(self.last_key) {
+                    let last_key = self.last_note_range.key;
+                    if self.loop_keys.insert(last_key) {
                         // The last key isn't already a loop key, so we can use
                         // it as the loop key.
                         continue;
@@ -440,9 +447,9 @@ impl ProgramToMidiConverter {
                         .map(|(index, &direction)| {
                             let delta = 12 * (index + 1);
                             if direction == 1 {
-                                self.last_key + (delta as u8).into()
+                                last_key + (delta as u8).into()
                             } else {
-                                self.last_key - (delta as u8).into()
+                                last_key - (delta as u8).into()
                             }
                         })
                         .find(|&loop_key| self.loop_keys.insert(loop_key))
@@ -497,13 +504,17 @@ impl ProgramToMidiConverter {
         self.timestamp += Self::DEFAULT_DELTA;
         let end = self.timestamp;
         self.timestamp += Self::DEFAULT_DELTA;
-        self.midi_notes.entry(key).or_default().push(NoteRange {
+
+        self.last_note_range = NoteRange {
             key,
             vel,
             start,
             end,
-        });
-        self.last_key = key;
+        };
+        self.midi_note_ranges
+            .entry(key)
+            .or_default()
+            .push(self.last_note_range.clone());
     }
 
     /// Modifies the most recently playing of the given `key` to end at the
@@ -511,28 +522,30 @@ impl ProgramToMidiConverter {
     ///
     /// Panics if the given `key` was never played.
     fn note_continue(&mut self, key: u7) {
-        self.midi_notes
+        self.midi_note_ranges
             .get_mut(&key)
             .and_then(|midi_notes| midi_notes.last_mut())
             .unwrap()
-            .end = self.timestamp - Self::DEFAULT_DELTA;
+            .end = self.last_note_range.end;
     }
 
     /// Returns a next key to play that has the given `target_distance` for the
     /// pitch class distance from the last played key.
     fn next_key(&mut self, target_distance: u7) -> u7 {
-        let direction;
-        if self.last_key < 55 {
-            direction = 1;
-        } else if self.last_key > 105 {
-            direction = -1;
+        let last_key = self.last_note_range.key;
+        let direction = if last_key < 55 {
+            1
+        } else if last_key > 105 {
+            -1
+        } else if rand::random() {
+            1
         } else {
-            direction = if rand::random() { 1 } else { -1 }
-        }
+            -1
+        };
 
         let next_key_downs =
-            (1..=11).map(|distance| self.last_key.as_int().saturating_sub(distance).into());
-        let next_key_ups = (1..=11).map(|distance| self.last_key + distance.into());
+            (1..=11).map(|distance| last_key.as_int().saturating_sub(distance).into());
+        let next_key_ups = (1..=11).map(|distance| last_key + distance.into());
         let next_keys: Vec<_> = match direction {
             -1 => next_key_downs.chain(next_key_ups).collect(),
             1 => next_key_ups.chain(next_key_downs).collect(),
@@ -541,7 +554,7 @@ impl ProgramToMidiConverter {
 
         next_keys
             .iter()
-            .filter(|&next_key| pitch_class_distance(self.last_key, *next_key) == target_distance)
+            .filter(|&next_key| pitch_class_distance(last_key, *next_key) == target_distance)
             .cycle()
             .enumerate()
             .map(|(index, next_key)| {
@@ -592,7 +605,7 @@ impl ProgramToMidiConverter {
         ];
 
         let mut midi_messages: Vec<_> = self
-            .midi_notes
+            .midi_note_ranges
             .values()
             .flatten()
             .flat_map(|midi_note| {
