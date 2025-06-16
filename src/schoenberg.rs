@@ -145,9 +145,9 @@ impl Program {
         let mut last_keys_on: HashSet<u7> = HashSet::new();
         let mut loop_keys_on: HashSet<u7> = HashSet::new();
 
-        for note in Self::extract_notes(track) {
-            match note {
-                Note::On { delta, key, vel } => {
+        for note_event in Self::extract_note_events(track) {
+            match note_event {
+                NoteEvent::On { delta, key, vel } => {
                     if keys_on.insert(key) && keys_on.len() >= 2 + loop_keys_on.len() {
                         if let Some(&loop_key) =
                             keys_on.iter().find(|key| !loop_keys_on.contains(key))
@@ -182,7 +182,7 @@ impl Program {
                     }
                     last_keys_on.insert(key);
                 }
-                Note::Off { key } => {
+                NoteEvent::Off { key } => {
                     keys_on.shift_remove(&key);
                     if loop_keys_on.remove(&key) {
                         tokens.push(Token::LoopEnd);
@@ -195,11 +195,11 @@ impl Program {
     }
 
     /// Extracts the notes from the given `track` and returns them as a vector
-    /// of [Note]s.
+    /// of [NoteEvent]s.
     ///
     /// Sorts adjacent note offs before note ons when they are at the same exact
     /// delta, so that the order of note offs and note ons is deterministic.
-    fn extract_notes(track: &Track) -> Vec<Note> {
+    fn extract_note_events(track: &Track) -> Vec<NoteEvent> {
         let mut notes = Vec::new();
         let mut note_offs = Vec::new();
         let mut note_ons = Vec::new();
@@ -216,8 +216,8 @@ impl Program {
             }
 
             match message {
-                MidiMessage::NoteOff { key, .. } => notes.push(Note::Off { key }),
-                MidiMessage::NoteOn { key, vel } => notes.push(Note::On {
+                MidiMessage::NoteOff { key, .. } => note_offs.push(NoteEvent::Off { key }),
+                MidiMessage::NoteOn { key, vel } => note_ons.push(NoteEvent::On {
                     delta: event.delta,
                     key,
                     vel,
@@ -284,7 +284,8 @@ impl Program {
     }
 }
 
-enum Note {
+/// A struct representing the event of pressing or releasing a note.
+enum NoteEvent {
     Off { key: u7 },
     On { delta: u28, key: u7, vel: u7 },
 }
@@ -339,12 +340,12 @@ struct ProgramToMidiConverter {
     direction: Direction,
     loop_keys: IndexSet<u7>,
     timestamp: u28,
-    midi_notes: HashMap<u7, Vec<MidiNote>>,
+    midi_notes: HashMap<u7, Vec<NoteRange>>,
     last_key: u7,
 }
 
 /// A struct representing a key that was pressed and released.
-struct MidiNote {
+struct NoteRange {
     key: u7,
     vel: u7,
     start: u28,
@@ -565,7 +566,7 @@ impl ProgramToMidiConverter {
         self.timestamp += Self::DEFAULT_DELTA;
         let end = self.timestamp;
         self.timestamp += Self::DEFAULT_DELTA;
-        self.midi_notes.entry(key).or_default().push(MidiNote {
+        self.midi_notes.entry(key).or_default().push(NoteRange {
             key,
             vel,
             start,
