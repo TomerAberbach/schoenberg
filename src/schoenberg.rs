@@ -341,16 +341,23 @@ struct ProgramToMidiConverter {
     timestamp: u28,
     midi_note_ranges: HashMap<u7, Vec<NoteRange>>,
     last_note_range: NoteRange,
+    last_direction: Direction,
     loop_keys: IndexSet<u7>,
 }
 
 /// A struct representing a key that was pressed and released.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct NoteRange {
     key: u7,
     vel: u7,
     start: u28,
     end: u28,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Direction {
+    Down,
+    Up,
 }
 
 impl Default for ProgramToMidiConverter {
@@ -364,6 +371,7 @@ impl Default for ProgramToMidiConverter {
                 start: 0.into(),
                 end: 0.into(),
             },
+            last_direction: Direction::Down,
             loop_keys: IndexSet::new(),
         }
     }
@@ -374,11 +382,11 @@ impl ProgramToMidiConverter {
     const MICROSECONDS_PER_BEAT: u24 = u24::new(60_000_000 / Self::BPM);
     const TICKS_PER_QUARTER: u16 = 480;
 
+    const SIXTEENTH_DELTA: u28 = u28::new((Self::TICKS_PER_QUARTER / 4) as u32);
+    const EIGHTH_DELTA: u28 = u28::new((Self::TICKS_PER_QUARTER / 2) as u32);
     const QUARTER_DELTA: u28 = u28::new(Self::TICKS_PER_QUARTER as u32);
     const HALF_DELTA: u28 = u28::new((Self::TICKS_PER_QUARTER * 2) as u32);
-    const WHOLE_DELTA: u28 = u28::new((Self::TICKS_PER_QUARTER * 4) as u32);
 
-    const DEFAULT_DELTA: u28 = Self::QUARTER_DELTA;
     const DEFAULT_VEL: u7 = u7::new(63);
 
     fn convert(&mut self, program: &Program) -> Vec<u8> {
@@ -440,16 +448,15 @@ impl ProgramToMidiConverter {
 
                     // Otherwise, we need to find a new key with the same pitch
                     // class distance for the purposes of looping.
-                    let loop_key = [1, -1]
+                    let loop_key = [Direction::Up, Direction::Down]
                         .iter()
                         .cycle()
                         .enumerate()
                         .map(|(index, &direction)| {
                             let delta = 12 * (index + 1);
-                            if direction == 1 {
-                                last_key + (delta as u8).into()
-                            } else {
-                                last_key - (delta as u8).into()
+                            match direction {
+                                Direction::Down => last_key - (delta as u8).into(),
+                                Direction::Up => last_key + (delta as u8).into(),
                             }
                         })
                         .find(|&loop_key| self.loop_keys.insert(loop_key))
@@ -501,9 +508,9 @@ impl ProgramToMidiConverter {
     /// Presses and releases the given `key` with the given `vel`.
     fn note_on(&mut self, key: u7, vel: u7) {
         let start = self.timestamp;
-        self.timestamp += Self::DEFAULT_DELTA;
+        self.timestamp += Self::next_delta();
         let end = self.timestamp;
-        self.timestamp += Self::DEFAULT_DELTA;
+        self.timestamp += Self::next_delta();
 
         self.last_note_range = NoteRange {
             key,
@@ -515,6 +522,22 @@ impl ProgramToMidiConverter {
             .entry(key)
             .or_default()
             .push(self.last_note_range.clone());
+    }
+
+    /// Returns the delta to use for the next key press or rest.
+    fn next_delta() -> u28 {
+        let mut rng = rand::rng();
+        let weighted_deltas = [
+            (Self::SIXTEENTH_DELTA, 12),
+            (Self::EIGHTH_DELTA, 11),
+            (Self::QUARTER_DELTA, 10),
+            (Self::HALF_DELTA, 1),
+        ];
+
+        let &(delta, _) = weighted_deltas
+            .choose_weighted(&mut rng, |&(_, weight)| weight)
+            .unwrap();
+        delta
     }
 
     /// Modifies the most recently playing of the given `key` to end at the
@@ -534,22 +557,30 @@ impl ProgramToMidiConverter {
     fn next_key(&mut self, target_distance: u7) -> u7 {
         let last_key = self.last_note_range.key;
         let direction = if last_key < 55 {
-            1
+            // Don't go too low.
+            Direction::Up
         } else if last_key > 105 {
-            -1
-        } else if rand::random() {
-            1
+            // Don't go too high.
+            Direction::Down
         } else {
-            -1
+            let mut rng = rand::rng();
+            // Slight preference for continuing in the same direction as before.
+            match self.last_direction {
+                Direction::Down => [(Direction::Down, 3), (Direction::Up, 2)],
+                Direction::Up => [(Direction::Down, 2), (Direction::Up, 3)],
+            }
+            .choose_weighted(&mut rng, |&(_, weight)| weight)
+            .unwrap()
+            .0
         };
+        self.last_direction = direction;
 
         let next_key_downs =
             (1..=11).map(|distance| last_key.as_int().saturating_sub(distance).into());
         let next_key_ups = (1..=11).map(|distance| last_key + distance.into());
         let next_keys: Vec<_> = match direction {
-            -1 => next_key_downs.chain(next_key_ups).collect(),
-            1 => next_key_ups.chain(next_key_downs).collect(),
-            _ => unreachable!(),
+            Direction::Down => next_key_downs.chain(next_key_ups).collect(),
+            Direction::Up => next_key_ups.chain(next_key_downs).collect(),
         };
 
         next_keys
@@ -561,21 +592,20 @@ impl ProgramToMidiConverter {
                 let cycle_index = (index / next_keys.len()) as u8;
                 let delta = cycle_index * 12;
                 match direction {
-                    -1 => {
+                    Direction::Down => {
                         if cycle_index % 2 == 0 {
                             next_key.as_int() + delta
                         } else {
                             next_key.as_int() - delta
                         }
                     }
-                    1 => {
+                    Direction::Up => {
                         if cycle_index % 2 == 0 {
                             next_key.as_int() - delta
                         } else {
                             next_key.as_int() + delta
                         }
                     }
-                    _ => unreachable!(),
                 }
                 .into()
             })
