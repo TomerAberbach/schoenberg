@@ -376,6 +376,25 @@ impl ProgramToMidiConverter {
     const DEFAULT_VEL: u7 = u7::new(63);
 
     fn convert(&mut self, program: &Program) -> Vec<u8> {
+        self.play_notes(program);
+
+        let header = Header {
+            format: Format::SingleTrack,
+            timing: Timing::Metrical(Self::TICKS_PER_QUARTER.into()),
+        };
+        let bf = program.to_bf();
+        let smf = Smf {
+            header,
+            tracks: vec![self.build_track(&bf)],
+        };
+
+        let mut midi_data = Vec::new();
+        smf.write(&mut midi_data).unwrap();
+        midi_data
+    }
+
+    /// Plays notes corresponding to the tokens of the given `program`.
+    fn play_notes(&mut self, program: &Program) {
         // Start on Middle C
         self.note_on(60.into(), Self::DEFAULT_VEL);
 
@@ -439,20 +458,6 @@ impl ProgramToMidiConverter {
                 self.note_continue(loop_key);
             }
         }
-
-        let header = Header {
-            format: Format::SingleTrack,
-            timing: Timing::Metrical(Self::TICKS_PER_QUARTER.into()),
-        };
-        let bf = program.to_bf();
-        let smf = Smf {
-            header,
-            tracks: vec![self.track(&bf)],
-        };
-
-        let mut midi_data = Vec::new();
-        smf.write(&mut midi_data).unwrap();
-        midi_data
     }
 
     /// Splits the given `program` tokens into smaller increments so that each
@@ -484,6 +489,33 @@ impl ProgramToMidiConverter {
                 _ => vec![token],
             })
             .collect()
+    }
+
+    /// Presses and releases the given `key` with the given `vel`.
+    fn note_on(&mut self, key: u7, vel: u7) {
+        let start = self.timestamp;
+        self.timestamp += Self::DEFAULT_DELTA;
+        let end = self.timestamp;
+        self.timestamp += Self::DEFAULT_DELTA;
+        self.midi_notes.entry(key).or_default().push(NoteRange {
+            key,
+            vel,
+            start,
+            end,
+        });
+        self.last_key = key;
+    }
+
+    /// Modifies the most recently playing of the given `key` to end at the
+    /// current timestamp.
+    ///
+    /// Panics if the given `key` was never played.
+    fn note_continue(&mut self, key: u7) {
+        self.midi_notes
+            .get_mut(&key)
+            .and_then(|midi_notes| midi_notes.last_mut())
+            .unwrap()
+            .end = self.timestamp - Self::DEFAULT_DELTA;
     }
 
     /// Returns a next key to play that has the given `target_distance` for the
@@ -538,35 +570,8 @@ impl ProgramToMidiConverter {
             .unwrap()
     }
 
-    /// Presses and releases the given `key` with the given `vel`.
-    fn note_on(&mut self, key: u7, vel: u7) {
-        let start = self.timestamp;
-        self.timestamp += Self::DEFAULT_DELTA;
-        let end = self.timestamp;
-        self.timestamp += Self::DEFAULT_DELTA;
-        self.midi_notes.entry(key).or_default().push(NoteRange {
-            key,
-            vel,
-            start,
-            end,
-        });
-        self.last_key = key;
-    }
-
-    /// Modifies the most recently playing of the given `key` to end at the
-    /// current timestamp.
-    ///
-    /// Panics if the given `key` was never played.
-    fn note_continue(&mut self, key: u7) {
-        self.midi_notes
-            .get_mut(&key)
-            .and_then(|midi_notes| midi_notes.last_mut())
-            .unwrap()
-            .end = self.timestamp - Self::DEFAULT_DELTA;
-    }
-
     /// Builds a MIDI [Track] from the played notes.
-    fn track<'a>(&self, bf: &'a str) -> Track<'a> {
+    fn build_track<'a>(&self, bf: &'a str) -> Track<'a> {
         let mut track = vec![
             TrackEvent {
                 delta: 0.into(),
