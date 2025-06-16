@@ -21,12 +21,13 @@ Schoenberg is an
 [esoteric programming language](https://en.wikipedia.org/wiki/Esoteric_programming_language)
 where programs are written as [MIDI](https://en.wikipedia.org/wiki/MIDI) files.
 
-This repository contains the programming language's interpreter, utilities for
-converting between Schoenberg and
-[Brainfuck](https://en.wikipedia.org/wiki/Brainfuck) programs, and
-[sample programs](./samples).
+This repository contains:
+- the programming language's interpreter
+- utilities for converting between Schoenberg and
+  [Brainfuck](https://en.wikipedia.org/wiki/Brainfuck) programs
+- [sample programs and their generated audio files](./samples).
 
-To learn about the language itself
+To learn more about the language itself
 [check out my website](https://tomeraberba.ch/schoenberg)!
 
 ## Install
