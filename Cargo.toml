@@ -8,6 +8,7 @@ clap = { version = "4.5.38", features = ["derive"] }
 clap-stdin = "0.6.0"
 indexmap = "2.9.0"
 midly = { version = "0.5.3", features = ["strict"] }
+rand = "0.9.1"
 
 [dev-dependencies]
 proptest = "1.6.0"

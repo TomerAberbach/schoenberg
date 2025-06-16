@@ -3,6 +3,7 @@ use midly::{
     num::{u28, u7},
     Format, Header, MidiMessage, Smf, Timing, Track, TrackEvent, TrackEventKind,
 };
+use rand::{prelude::*, random};
 use std::{
     collections::{HashMap, HashSet},
     error, fmt,
@@ -337,11 +338,10 @@ impl error::Error for Error {}
 
 /// A struct for holding the current state of a [Program] to MIDI conversion.
 struct ProgramToMidiConverter {
-    direction: Direction,
-    loop_keys: IndexSet<u7>,
     timestamp: u28,
     midi_notes: HashMap<u7, Vec<NoteRange>>,
     last_key: u7,
+    loop_keys: IndexSet<u7>,
 }
 
 /// A struct representing a key that was pressed and released.
@@ -360,11 +360,10 @@ enum Direction {
 impl Default for ProgramToMidiConverter {
     fn default() -> Self {
         Self {
-            direction: Direction::Up,
-            loop_keys: IndexSet::new(),
             timestamp: 0.into(),
             midi_notes: HashMap::new(),
             last_key: 0.into(),
+            loop_keys: IndexSet::new(),
         }
     }
 }
@@ -511,51 +510,48 @@ impl ProgramToMidiConverter {
     /// Returns a next key to play that has the given `target_distance` for the
     /// pitch class distance from the last played key.
     fn next_key(&mut self, target_distance: u7) -> u7 {
-        let last_key = self.last_key;
-        match self.direction {
-            Direction::Down => {
-                if last_key < 55 {
-                    self.direction = Direction::Up;
-                }
-            }
-            Direction::Up => {
-                if last_key > 105 {
-                    self.direction = Direction::Down;
-                }
-            }
+        let direction;
+        if self.last_key < 55 {
+            direction = 1;
+        } else if self.last_key > 105 {
+            direction = -1;
+        } else {
+            direction = if random() { 1 } else { -1 }
         }
 
         let next_key_downs =
-            (1..=11).map(|distance| last_key.as_int().saturating_sub(distance).into());
-        let next_key_ups = (1..=11).map(|distance| last_key + distance.into());
-        let next_keys: Vec<_> = match self.direction {
-            Direction::Down => next_key_downs.chain(next_key_ups).collect(),
-            Direction::Up => next_key_ups.chain(next_key_downs).collect(),
+            (1..=11).map(|distance| self.last_key.as_int().saturating_sub(distance).into());
+        let next_key_ups = (1..=11).map(|distance| self.last_key + distance.into());
+        let next_keys: Vec<_> = match direction {
+            -1 => next_key_downs.chain(next_key_ups).collect(),
+            1 => next_key_ups.chain(next_key_downs).collect(),
+            _ => unreachable!(),
         };
 
         next_keys
             .iter()
-            .filter(|&next_key| pitch_class_distance(last_key, *next_key) == target_distance)
+            .filter(|&next_key| pitch_class_distance(self.last_key, *next_key) == target_distance)
             .cycle()
             .enumerate()
             .map(|(index, next_key)| {
                 let cycle_index = (index / next_keys.len()) as u8;
                 let delta = cycle_index * 12;
-                match self.direction {
-                    Direction::Down => {
+                match direction {
+                    -1 => {
                         if cycle_index % 2 == 0 {
                             next_key.as_int() + delta
                         } else {
                             next_key.as_int() - delta
                         }
                     }
-                    Direction::Up => {
+                    1 => {
                         if cycle_index % 2 == 0 {
                             next_key.as_int() - delta
                         } else {
                             next_key.as_int() + delta
                         }
                     }
+                    _ => unreachable!(),
                 }
                 .into()
             })
