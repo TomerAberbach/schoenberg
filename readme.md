@@ -28,7 +28,7 @@ This repository contains:
 - [Sample programs and their generated audio files](./samples)
 
 To learn more about the language itself
-[check out my website](https://tomeraberba.ch/schoenberg)!
+[check out the website](https://tomeraberba.ch/schoenberg)!
 
 ## Install
 
