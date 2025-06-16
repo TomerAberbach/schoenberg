@@ -19,7 +19,7 @@ pub struct Program {
 }
 
 impl Program {
-    const MEMORY_SIZE: usize = 30000;
+    const MEMORY_SIZE: usize = 30_000;
 
     /// Runs the program with the given `input` and returns the output.
     pub fn run(&self, input: &str) -> String {
@@ -477,12 +477,12 @@ impl ProgramToMidiConverter {
         midi_data
     }
 
+    /// Splits the given `program` tokens into smaller increments so that each
+    /// token an be represented by a single MIDI note, and isn't too loud.
     fn split_program_tokens(program: &Program) -> Vec<Token> {
         program
             .tokens
             .iter()
-            // Split large increments into smaller increments so that each token
-            // can be represented by a single MIDI note, and isn't too loud.
             .flat_map(|&token| match token {
                 Token::Decrement(amount)
                 | Token::Increment(amount)
@@ -505,9 +505,11 @@ impl ProgramToMidiConverter {
                 }
                 _ => vec![token],
             })
-            .collect::<Vec<_>>()
+            .collect()
     }
 
+    /// Returns a next key to play that has the given `target_distance` for the
+    /// pitch class distance from the last played key.
     fn next_key(&mut self, target_distance: u7) -> u7 {
         let last_key = self.last_key;
         match self.direction {
@@ -561,6 +563,7 @@ impl ProgramToMidiConverter {
             .unwrap()
     }
 
+    /// Presses and releases the given `key` with the given `vel`.
     fn note_on(&mut self, key: u7, vel: u7) {
         let start = self.timestamp;
         self.timestamp += Self::DEFAULT_DELTA;
@@ -575,14 +578,16 @@ impl ProgramToMidiConverter {
         self.last_key = key;
     }
 
+    /// Modifies the most recently playing of the given `key` to end at the
+    /// current timestamp.
+    ///
+    /// Panics if the given `key` was never played.
     fn note_continue(&mut self, key: u7) {
-        if let Some(midi_note) = self
-            .midi_notes
+        self.midi_notes
             .get_mut(&key)
             .and_then(|midi_notes| midi_notes.last_mut())
-        {
-            midi_note.end = self.timestamp - Self::DEFAULT_DELTA;
-        }
+            .unwrap()
+            .end = self.timestamp - Self::DEFAULT_DELTA;
     }
 }
 
