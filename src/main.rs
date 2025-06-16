@@ -19,18 +19,29 @@ struct Args {
 
 #[derive(Debug, clap::Subcommand, Clone)]
 enum Subcommand {
+    /// Run a Schoenberg MIDI program.
     Run {
+        /// Path to the Schoenberg MIDI program, or stdin.
         #[arg(default_value = "-")]
         midi: FileOrStdin,
 
+        /// Input for the Schoenberg MIDI program.
         #[arg(long = "input", short = 'i', default_value_t = MaybeStdin::from_str("").unwrap())]
         input: MaybeStdin<String>,
     },
+    /// Convert a BF program to a Schoenberg MIDI program.
     FromBf {
+        /// Path to the BF program, or stdin.
         #[arg(default_value = "-")]
         input: MaybeStdin<String>,
+
+        /// Beats per minute for the Schoenberg MIDI program.
+        #[arg(long = "bpm", short = 'b', default_value_t = 140)]
+        bpm: u32,
     },
+    /// Convert Schoenberg MIDI program to a BF program.
     ToBf {
+        /// Path to the Schoenberg MIDI program, or stdin.
         #[arg(default_value = "-")]
         midi: FileOrStdin,
     },
@@ -40,7 +51,7 @@ fn main() {
     let args = Args::parse();
     let res = match args.subcommand {
         Subcommand::Run { midi, input } => run(midi, &input),
-        Subcommand::FromBf { input } => from_bf(&input),
+        Subcommand::FromBf { input, bpm } => from_bf(&input, bpm),
         Subcommand::ToBf { midi } => to_bf(midi),
     };
     if let Err(err) = res {
@@ -61,8 +72,8 @@ fn run(midi: FileOrStdin, input: &str) -> Result<(), Box<dyn error::Error>> {
     Ok(())
 }
 
-fn from_bf(input: &str) -> Result<(), Box<dyn error::Error>> {
-    let midi_bytes = Program::from_bf(input).to_midi();
+fn from_bf(input: &str, bpm: u32) -> Result<(), Box<dyn error::Error>> {
+    let midi_bytes = Program::from_bf(input).to_midi(bpm);
 
     let mut stdout = io::stdout();
     stdout.write_all(&midi_bytes)?;

@@ -1,6 +1,6 @@
 use indexmap::IndexSet;
 use midly::{
-    num::{u24, u28, u7},
+    num::{u28, u7},
     Format, Header, MetaMessage, MidiMessage, Smf, Timing, Track, TrackEvent, TrackEventKind,
 };
 use rand::prelude::*;
@@ -94,7 +94,11 @@ impl Program {
     pub fn from_bf(bf: &str) -> Program {
         let mut tokens = Vec::new();
 
-        let mut chars = bf.chars().peekable();
+        let mut chars = bf
+            .lines()
+            .filter(|line| !line.starts_with("#"))
+            .flat_map(|line| line.chars())
+            .peekable();
         while let Some(ch) = chars.next() {
             match ch {
                 '+' | '-' | '>' | '<' => {
@@ -261,8 +265,8 @@ impl Program {
     }
 
     /// Converts the [Program] to MIDI bytes.
-    pub fn to_midi(&self) -> Vec<u8> {
-        ProgramToMidiConverter::default().convert(self)
+    pub fn to_midi(&self, bpm: u32) -> Vec<u8> {
+        ProgramToMidiConverter::default().convert(self, bpm)
     }
 
     /// Converts the [Program] to a BF program string.
@@ -378,8 +382,6 @@ impl Default for ProgramToMidiConverter {
 }
 
 impl ProgramToMidiConverter {
-    const BPM: u32 = 120;
-    const MICROSECONDS_PER_BEAT: u24 = u24::new(60_000_000 / Self::BPM);
     const TICKS_PER_QUARTER: u16 = 480;
 
     const SIXTEENTH_DELTA: u28 = u28::new((Self::TICKS_PER_QUARTER / 4) as u32);
@@ -389,7 +391,7 @@ impl ProgramToMidiConverter {
 
     const DEFAULT_VEL: u7 = u7::new(63);
 
-    fn convert(&mut self, program: &Program) -> Vec<u8> {
+    fn convert(&mut self, program: &Program, bpm: u32) -> Vec<u8> {
         self.play_notes(program);
 
         let header = Header {
@@ -399,7 +401,7 @@ impl ProgramToMidiConverter {
         let bf = program.to_bf();
         let smf = Smf {
             header,
-            tracks: vec![self.build_track(&bf)],
+            tracks: vec![self.build_track(&bf, bpm)],
         };
 
         let mut midi_data = Vec::new();
@@ -556,10 +558,10 @@ impl ProgramToMidiConverter {
     /// pitch class distance from the last played key.
     fn next_key(&mut self, target_distance: u7) -> u7 {
         let last_key = self.last_note_range.key;
-        let direction = if last_key < 55 {
+        let direction = if last_key < 50 {
             // Don't go too low.
             Direction::Up
-        } else if last_key > 105 {
+        } else if last_key > 85 {
             // Don't go too high.
             Direction::Down
         } else {
@@ -614,7 +616,7 @@ impl ProgramToMidiConverter {
     }
 
     /// Builds a MIDI [Track] from the played notes.
-    fn build_track<'a>(&self, bf: &'a str) -> Track<'a> {
+    fn build_track<'a>(&self, bf: &'a str, bpm: u32) -> Track<'a> {
         let mut track = vec![
             TrackEvent {
                 delta: 0.into(),
@@ -626,7 +628,7 @@ impl ProgramToMidiConverter {
             },
             TrackEvent {
                 delta: 0.into(),
-                kind: TrackEventKind::Meta(MetaMessage::Tempo(Self::MICROSECONDS_PER_BEAT)),
+                kind: TrackEventKind::Meta(MetaMessage::Tempo((60_000_000 / bpm).into())),
             },
             TrackEvent {
                 delta: 0.into(),
@@ -693,7 +695,7 @@ mod tests {
     fn test_hello_world_bf_roundtrip() {
         let bf = ">++++++++[<+++++++++>-]<.>++++[<+++++++>-]<+.+++++++..+++.>>++++++[<+++++++>-]<++.------------.>++++++[<+++++++++>-]<+.<.+++.------.--------.>>>++++[<++++++++>-]<+.";
 
-        let roundtripped_bf = Program::from_midi(&Program::from_bf(bf).to_midi())
+        let roundtripped_bf = Program::from_midi(&Program::from_bf(bf).to_midi(120))
             .unwrap()
             .to_bf();
 
@@ -704,7 +706,7 @@ mod tests {
     fn test_cell_width_bf_roundtrip() {
         let bf = "++++++++[>++++++++<-]>[<++++>-]+<[>-<[>++++<-]>[<++++++++>-]<[>++++++++<-]+>[>++++++++++[>+++++<-]>+.-.[-]<<[-]<->]<[>>+++++++[>+++++++<-]>.+++++.[-]<<<-]]>[>++++++++[>+++++++<-]>.[-]<<-]<+++++++++++[>+++>+++++++++>+++++++++>+<<<<-]>-.>-.+++++++.+++++++++++.<.>>.++.+++++++..<-.>>-.[[-]<]";
 
-        let roundtripped_bf = Program::from_midi(&Program::from_bf(bf).to_midi())
+        let roundtripped_bf = Program::from_midi(&Program::from_bf(bf).to_midi(120))
             .unwrap()
             .to_bf();
 
@@ -729,7 +731,7 @@ mod tests {
     proptest! {
         #[test]
         fn test_bf_roundtrip_property(bf in bf_strategy()) {
-            let roundtripped_bf = Program::from_midi(&Program::from_bf(&bf).to_midi())
+            let roundtripped_bf = Program::from_midi(&Program::from_bf(&bf).to_midi(120))
                 .unwrap()
                 .to_bf();
 
