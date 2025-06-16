@@ -1,9 +1,9 @@
 use indexmap::IndexSet;
 use midly::{
-    num::{u28, u7},
-    Format, Header, MidiMessage, Smf, Timing, Track, TrackEvent, TrackEventKind,
+    num::{u15, u24, u28, u7},
+    Format, Header, MetaMessage, MidiMessage, Smf, Timing, Track, TrackEvent, TrackEventKind,
 };
-use rand::{prelude::*, random};
+use rand::prelude::*;
 use std::{
     collections::{HashMap, HashSet},
     error, fmt,
@@ -352,11 +352,6 @@ struct NoteRange {
     end: u28,
 }
 
-enum Direction {
-    Down,
-    Up,
-}
-
 impl Default for ProgramToMidiConverter {
     fn default() -> Self {
         Self {
@@ -369,9 +364,13 @@ impl Default for ProgramToMidiConverter {
 }
 
 impl ProgramToMidiConverter {
-    const DEFAULT_INITIAL_KEY: u7 = u7::new(64);
+    const BPM: u32 = 120;
+    const MICROSECONDS_PER_BEAT: u24 = u24::new(60_000_000 / Self::BPM);
+    const TICKS_PER_QUARTER: u15 = u15::new(480);
+
+    const DEFAULT_INITIAL_KEY: u7 = u7::new(60); // Middle C
     const DEFAULT_VEL: u7 = u7::new(63);
-    const DEFAULT_DELTA: u28 = u28::new(12);
+    const DEFAULT_DELTA: u28 = u28::new(480);
 
     fn convert(&mut self, program: &Program) -> Vec<u8> {
         self.note_on(Self::DEFAULT_INITIAL_KEY, Self::DEFAULT_VEL);
@@ -396,11 +395,11 @@ impl ProgramToMidiConverter {
                 }
                 Token::Output => {
                     let next_key = self.next_key(5.into());
-                    self.note_on(next_key, 63.into());
+                    self.note_on(next_key, Self::DEFAULT_VEL);
                 }
                 Token::Input => {
                     let next_key = self.next_key(6.into());
-                    self.note_on(next_key, 63.into());
+                    self.note_on(next_key, Self::DEFAULT_VEL);
                 }
                 Token::LoopStart => {
                     let mut last_key = self.last_key;
@@ -424,51 +423,13 @@ impl ProgramToMidiConverter {
             }
         }
 
-        let mut track: Track = self
-            .midi_notes
-            .values()
-            .flatten()
-            .flat_map(|midi_note| {
-                vec![
-                    TrackEvent {
-                        delta: midi_note.start,
-                        kind: TrackEventKind::Midi {
-                            channel: 0.into(),
-                            message: MidiMessage::NoteOn {
-                                key: midi_note.key,
-                                vel: midi_note.vel,
-                            },
-                        },
-                    },
-                    TrackEvent {
-                        delta: midi_note.end,
-                        kind: TrackEventKind::Midi {
-                            channel: 0.into(),
-                            message: MidiMessage::NoteOff {
-                                key: midi_note.key,
-                                vel: midi_note.vel,
-                            },
-                        },
-                    },
-                ]
-            })
-            .collect();
-        track.sort_by_key(|event| event.delta);
-        let mut timestamp = 0.into();
-        for event in &mut track {
-            let delta = event.delta;
-            event.delta -= timestamp;
-            timestamp = delta;
-        }
-
         let header = Header {
             format: Format::SingleTrack,
-            timing: Timing::Metrical(480.into()),
+            timing: Timing::Metrical(Self::TICKS_PER_QUARTER),
         };
-
         let smf = Smf {
             header,
-            tracks: vec![track],
+            tracks: vec![self.track()],
         };
 
         let mut midi_data = Vec::new();
@@ -516,7 +477,7 @@ impl ProgramToMidiConverter {
         } else if self.last_key > 105 {
             direction = -1;
         } else {
-            direction = if random() { 1 } else { -1 }
+            direction = if rand::random() { 1 } else { -1 }
         }
 
         let next_key_downs =
@@ -584,6 +545,72 @@ impl ProgramToMidiConverter {
             .and_then(|midi_notes| midi_notes.last_mut())
             .unwrap()
             .end = self.timestamp - Self::DEFAULT_DELTA;
+    }
+
+    /// Builds a MIDI [Track] from the played notes.
+    fn track(&self) -> Track {
+        let mut track = vec![
+            TrackEvent {
+                delta: 0.into(),
+                kind: TrackEventKind::Meta(MetaMessage::ProgramName(b"Schoenberg")),
+            },
+            TrackEvent {
+                delta: 0.into(),
+                kind: TrackEventKind::Meta(MetaMessage::Tempo(Self::MICROSECONDS_PER_BEAT)),
+            },
+            TrackEvent {
+                delta: 0.into(),
+                kind: TrackEventKind::Meta(MetaMessage::TimeSignature(4, 2, 24, 8)),
+            },
+        ];
+
+        let mut midi_messages: Vec<_> = self
+            .midi_notes
+            .values()
+            .flatten()
+            .flat_map(|midi_note| {
+                vec![
+                    TrackEvent {
+                        delta: midi_note.start,
+                        kind: TrackEventKind::Midi {
+                            channel: 0.into(),
+                            message: MidiMessage::NoteOn {
+                                key: midi_note.key,
+                                vel: midi_note.vel,
+                            },
+                        },
+                    },
+                    TrackEvent {
+                        delta: midi_note.end,
+                        kind: TrackEventKind::Midi {
+                            channel: 0.into(),
+                            message: MidiMessage::NoteOff {
+                                key: midi_note.key,
+                                vel: midi_note.vel,
+                            },
+                        },
+                    },
+                ]
+            })
+            .collect();
+        midi_messages.sort_by_key(|event| event.delta);
+
+        // The deltas are absolute, but MIDI requires them to be relative to the
+        // previous note, so we make them relative here.
+        let mut timestamp = 0.into();
+        for event in &mut midi_messages {
+            let delta = event.delta;
+            event.delta -= timestamp;
+            timestamp = delta;
+        }
+
+        track.extend(midi_messages);
+        track.push(TrackEvent {
+            delta: 0.into(),
+            kind: TrackEventKind::Meta(MetaMessage::EndOfTrack),
+        });
+
+        track
     }
 }
 
