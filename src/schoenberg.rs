@@ -1,6 +1,6 @@
 use indexmap::IndexSet;
 use midly::{
-    num::{u15, u24, u28, u7},
+    num::{u24, u28, u7},
     Format, Header, MetaMessage, MidiMessage, Smf, Timing, Track, TrackEvent, TrackEventKind,
 };
 use rand::prelude::*;
@@ -366,14 +366,18 @@ impl Default for ProgramToMidiConverter {
 impl ProgramToMidiConverter {
     const BPM: u32 = 120;
     const MICROSECONDS_PER_BEAT: u24 = u24::new(60_000_000 / Self::BPM);
-    const TICKS_PER_QUARTER: u15 = u15::new(480);
+    const TICKS_PER_QUARTER: u16 = 480;
 
-    const DEFAULT_INITIAL_KEY: u7 = u7::new(60); // Middle C
+    const QUARTER_DELTA: u28 = u28::new(Self::TICKS_PER_QUARTER as u32);
+    const HALF_DELTA: u28 = u28::new((Self::TICKS_PER_QUARTER * 2) as u32);
+    const WHOLE_DELTA: u28 = u28::new((Self::TICKS_PER_QUARTER * 4) as u32);
+
+    const DEFAULT_DELTA: u28 = Self::QUARTER_DELTA;
     const DEFAULT_VEL: u7 = u7::new(63);
-    const DEFAULT_DELTA: u28 = u28::new(480);
 
     fn convert(&mut self, program: &Program) -> Vec<u8> {
-        self.note_on(Self::DEFAULT_INITIAL_KEY, Self::DEFAULT_VEL);
+        // Start on Middle C
+        self.note_on(60.into(), Self::DEFAULT_VEL);
 
         for token in Self::split_program_tokens(program).iter() {
             match token {
@@ -402,16 +406,29 @@ impl ProgramToMidiConverter {
                     self.note_on(next_key, Self::DEFAULT_VEL);
                 }
                 Token::LoopStart => {
-                    let mut last_key = self.last_key;
-                    if self.loop_keys.insert(last_key) {
+                    if self.loop_keys.insert(self.last_key) {
+                        // The last key isn't already a loop key, so we can use
+                        // it as the loop key.
                         continue;
                     }
 
-                    last_key += 12.into();
-                    while !self.loop_keys.insert(last_key) {
-                        last_key += 12.into();
-                    }
-                    self.note_on(last_key, Self::DEFAULT_VEL);
+                    // Otherwise, we need to find a new key with the same pitch
+                    // class distance for the purposes of looping.
+                    let loop_key = [1, -1]
+                        .iter()
+                        .cycle()
+                        .enumerate()
+                        .map(|(index, &direction)| {
+                            let delta = 12 * (index + 1);
+                            if direction == 1 {
+                                self.last_key + (delta as u8).into()
+                            } else {
+                                self.last_key - (delta as u8).into()
+                            }
+                        })
+                        .find(|&loop_key| self.loop_keys.insert(loop_key))
+                        .unwrap();
+                    self.note_on(loop_key, Self::DEFAULT_VEL);
                 }
                 Token::LoopEnd => {
                     self.loop_keys.pop();
@@ -425,7 +442,7 @@ impl ProgramToMidiConverter {
 
         let header = Header {
             format: Format::SingleTrack,
-            timing: Timing::Metrical(Self::TICKS_PER_QUARTER),
+            timing: Timing::Metrical(Self::TICKS_PER_QUARTER.into()),
         };
         let smf = Smf {
             header,
