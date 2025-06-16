@@ -22,10 +22,10 @@ Schoenberg is an
 where programs are written as [MIDI](https://en.wikipedia.org/wiki/MIDI) files.
 
 This repository contains:
-- the programming language's interpreter
-- utilities for converting between Schoenberg and
+- The programming language's interpreter
+- Utilities for converting between Schoenberg and
   [Brainfuck](https://en.wikipedia.org/wiki/Brainfuck) programs
-- [sample programs and their generated audio files](./samples).
+- [Sample programs and their generated audio files](./samples)
 
 To learn more about the language itself
 [check out my website](https://tomeraberba.ch/schoenberg)!
