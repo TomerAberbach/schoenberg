@@ -147,6 +147,7 @@ impl Program {
         let mut tokens = Vec::new();
 
         let mut keys_on: IndexSet<u7> = IndexSet::new();
+        let mut last_event_was_on = false;
         let mut last_keys_on: HashSet<u7> = HashSet::new();
         let mut loop_keys_on: HashSet<u7> = HashSet::new();
 
@@ -182,16 +183,18 @@ impl Program {
                         _ => panic!("Impossible note distance"),
                     };
 
-                    if delta > 0 {
+                    if !last_event_was_on || delta > 0 {
                         last_keys_on.clear();
                     }
                     last_keys_on.insert(key);
+                    last_event_was_on = true;
                 }
                 NoteEvent::Off { key } => {
                     keys_on.shift_remove(&key);
                     if loop_keys_on.remove(&key) {
                         tokens.push(Token::LoopEnd);
                     }
+                    last_event_was_on = false;
                 }
             }
         }
@@ -510,9 +513,9 @@ impl ProgramToMidiConverter {
     /// Presses and releases the given `key` with the given `vel`.
     fn note_on(&mut self, key: u7, vel: u7) {
         let start = self.timestamp;
-        self.timestamp += Self::next_delta();
+        self.timestamp += Self::next_key_delta();
         let end = self.timestamp;
-        self.timestamp += Self::next_delta();
+        self.timestamp += Self::next_rest_delta();
 
         self.last_note_range = NoteRange {
             key,
@@ -526,13 +529,31 @@ impl ProgramToMidiConverter {
             .push(self.last_note_range.clone());
     }
 
-    /// Returns the delta to use for the next key press or rest.
-    fn next_delta() -> u28 {
+    /// Returns the delta to use for the next key press.
+    fn next_key_delta() -> u28 {
         let mut rng = rand::rng();
         let weighted_deltas = [
             (Self::SIXTEENTH_DELTA, 12),
             (Self::EIGHTH_DELTA, 11),
             (Self::QUARTER_DELTA, 10),
+            (Self::HALF_DELTA, 1),
+        ];
+
+        let &(delta, _) = weighted_deltas
+            .choose_weighted(&mut rng, |&(_, weight)| weight)
+            .unwrap();
+        delta
+    }
+
+    /// Returns the delta to use for the next rest.
+    fn next_rest_delta() -> u28 {
+        let mut rng = rand::rng();
+        let weighted_deltas = [
+            (Self::SIXTEENTH_DELTA, 12),
+            (Self::EIGHTH_DELTA, 11),
+            (Self::QUARTER_DELTA, 10),
+            // Allow legato.
+            (0.into(), 4),
             (Self::HALF_DELTA, 1),
         ];
 
