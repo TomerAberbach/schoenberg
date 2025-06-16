@@ -711,27 +711,31 @@ impl ProgramToMidiConverter {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+    use std::fs;
 
     #[test]
-    fn test_hello_world_bf_roundtrip() {
-        let bf = ">++++++++[<+++++++++>-]<.>++++[<+++++++>-]<+.+++++++..+++.>>++++++[<+++++++>-]<++.------------.>++++++[<+++++++++>-]<+.<.+++.------.--------.>>>++++[<++++++++>-]<+.";
-
-        let roundtripped_bf = Program::from_midi(&Program::from_bf(bf).to_midi(120))
+    fn test_sample_roundtrip() {
+        let bf_programs: Vec<String> = fs::read_dir("./samples")
             .unwrap()
-            .to_bf();
+            .map(|res| res.unwrap())
+            .filter(|item| {
+                item.file_type().unwrap().is_file()
+                    && item.file_name().into_string().unwrap().ends_with(".b")
+            })
+            .map(|item| fs::read_to_string(item.path()).unwrap())
+            .map(|bf| bf.lines().filter(|line| !line.starts_with("#")).collect())
+            .collect();
+        println!("{} BF programs", bf_programs.len());
 
-        assert_eq!(roundtripped_bf, bf);
-    }
+        for (index, bf) in bf_programs.into_iter().enumerate() {
+            println!("{}: {}", index, bf);
 
-    #[test]
-    fn test_cell_width_bf_roundtrip() {
-        let bf = "++++++++[>++++++++<-]>[<++++>-]+<[>-<[>++++<-]>[<++++++++>-]<[>++++++++<-]+>[>++++++++++[>+++++<-]>+.-.[-]<<[-]<->]<[>>+++++++[>+++++++<-]>.+++++.[-]<<<-]]>[>++++++++[>+++++++<-]>.[-]<<-]<+++++++++++[>+++>+++++++++>+++++++++>+<<<<-]>-.>-.+++++++.+++++++++++.<.>>.++.+++++++..<-.>>-.[[-]<]";
+            let roundtripped_bf = Program::from_midi(&Program::from_bf(&bf).to_midi(120))
+                .unwrap()
+                .to_bf();
 
-        let roundtripped_bf = Program::from_midi(&Program::from_bf(bf).to_midi(120))
-            .unwrap()
-            .to_bf();
-
-        assert_eq!(roundtripped_bf, bf);
+            assert_eq!(roundtripped_bf, bf);
+        }
     }
 
     fn bf_strategy() -> impl Strategy<Value = String> {
