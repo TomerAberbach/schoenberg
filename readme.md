@@ -19,7 +19,7 @@
 
 Schoenberg is an
 [esoteric programming language](https://en.wikipedia.org/wiki/Esoteric_programming_language)
-where programs are written as MIDI files.
+where programs are written as [MIDI](https://en.wikipedia.org/wiki/MIDI) files.
 
 This repository contains the programming language's interpreter, utilities for
 converting between Schoenberg and
