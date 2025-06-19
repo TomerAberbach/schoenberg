@@ -22,11 +22,10 @@ pub struct Program {
 impl Program {
     const MEMORY_SIZE: usize = 30_000;
 
-    /// Runs the program with the given `input` and returns the output.
-    pub fn run(&self, input: &str) -> String {
+    /// Runs the program with the given `input` and yields the output.
+    pub fn run(&self, input: &str, output: impl Fn(u8)) {
         let input = input.as_bytes();
         let mut input_pointer = 0;
-        let mut output = Vec::new();
 
         let mut memory = [0u8; Self::MEMORY_SIZE];
         let mut memory_pointer = 0;
@@ -49,7 +48,7 @@ impl Program {
                     memory_pointer =
                         memory_pointer.wrapping_add((*amount).into()) % Self::MEMORY_SIZE
                 }
-                Token::Output => output.push(memory[memory_pointer]),
+                Token::Output => output(memory[memory_pointer]),
                 Token::Input => {
                     memory[memory_pointer] = match input.get(input_pointer) {
                         Some(&input) => {
@@ -72,8 +71,6 @@ impl Program {
             }
             program_counter += 1
         }
-
-        String::from_utf8_lossy(&output).into_owned()
     }
 
     /// Compiles a [Program] from the given `midi_bytes` or returns a
