@@ -23,8 +23,8 @@ where programs are written as [MIDI](https://en.wikipedia.org/wiki/MIDI) files.
 
 This repository contains:
 - The programming language's interpreter
-- Utilities for converting between Schoenberg and
-  [Brainfuck](https://en.wikipedia.org/wiki/Brainfuck) programs
+- Transpilers between Schoenberg and
+  [brainfuck](https://esolangs.org/wiki/Brainfuck) programs
 - [Sample programs and their generated audio files](./samples)
 
 To learn more about the language itself
