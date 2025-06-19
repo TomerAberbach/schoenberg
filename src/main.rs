@@ -29,7 +29,7 @@ enum Subcommand {
         #[arg(long = "input", short = 'i', default_value_t = MaybeStdin::from_str("").unwrap())]
         input: MaybeStdin<String>,
     },
-    /// Convert a BF program to a Schoenberg MIDI program.
+    /// Transpile a BF program to a Schoenberg MIDI program.
     FromBf {
         /// Path to the BF program, or stdin.
         #[arg(default_value = "-")]
@@ -39,7 +39,7 @@ enum Subcommand {
         #[arg(long = "bpm", short = 'b', default_value_t = 140)]
         bpm: u32,
     },
-    /// Convert a Schoenberg MIDI program to a BF program.
+    /// Transpile a Schoenberg MIDI program to a BF program.
     ToBf {
         /// Path to the Schoenberg MIDI program, or stdin.
         #[arg(default_value = "-")]

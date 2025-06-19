@@ -49,8 +49,8 @@ Usage: schoenberg <COMMAND>
 
 Commands:
   run      Run a Schoenberg MIDI program
-  from-bf  Convert a BF program to a Schoenberg MIDI program
-  to-bf    Convert a Schoenberg MIDI program to a BF program
+  from-bf  Transpile a BF program to a Schoenberg MIDI program
+  to-bf    Transpile a Schoenberg MIDI program to a BF program
   help     Print this message or the help of the given subcommand(s)
 
 Options:
