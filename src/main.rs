@@ -66,9 +66,7 @@ fn run(midi: FileOrStdin, input: &str) -> Result<(), Box<dyn error::Error>> {
         .bytes()
         .collect::<Result<Vec<u8>, _>>()?;
     let program = Program::from_midi(&midi_bytes)?;
-    program.run(input, |byte| {
-        io::stdout().write(&[byte]).unwrap();
-    });
+    program.run(input, |byte| io::stdout().write_all(&[byte]).unwrap());
 
     Ok(())
 }
