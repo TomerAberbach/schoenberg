@@ -3,7 +3,7 @@ use clap_stdin::{FileOrStdin, MaybeStdin};
 use schoenberg::Program;
 use std::{
     error,
-    io::{self, Read, Write},
+    io::{self, BufReader, Read, Write},
     process,
     str::FromStr,
 };
@@ -61,8 +61,7 @@ fn main() {
 }
 
 fn run(midi: FileOrStdin, input: &str) -> Result<(), Box<dyn error::Error>> {
-    let midi_bytes = midi
-        .into_reader()?
+    let midi_bytes = BufReader::new(midi.into_reader()?)
         .bytes()
         .collect::<Result<Vec<u8>, _>>()?;
     let program = Program::from_midi(&midi_bytes)?;
