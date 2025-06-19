@@ -61,9 +61,7 @@ fn main() {
 }
 
 fn run(midi: FileOrStdin, input: &str) -> Result<(), Box<dyn error::Error>> {
-    let midi_bytes = BufReader::new(midi.into_reader()?)
-        .bytes()
-        .collect::<Result<Vec<u8>, _>>()?;
+    let midi_bytes = bytes(midi)?;
     let program = Program::from_midi(&midi_bytes)?;
     program.run(input, |byte| io::stdout().write_all(&[byte]).unwrap());
 
@@ -81,12 +79,15 @@ fn from_bf(input: &str, bpm: u32) -> Result<(), Box<dyn error::Error>> {
 }
 
 fn to_bf(midi: FileOrStdin) -> Result<(), Box<dyn error::Error>> {
-    let midi_bytes = midi
-        .into_reader()?
-        .bytes()
-        .collect::<Result<Vec<u8>, _>>()?;
+    let midi_bytes = bytes(midi)?;
     let program = Program::from_midi(&midi_bytes)?;
     println!("{}", program.to_bf());
 
     Ok(())
+}
+
+fn bytes(midi: FileOrStdin) -> Result<Vec<u8>, Box<dyn error::Error>> {
+    Ok(BufReader::new(midi.into_reader()?)
+        .bytes()
+        .collect::<Result<Vec<u8>, _>>()?)
 }
