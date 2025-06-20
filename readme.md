@@ -22,7 +22,7 @@ Schoenberg is an
 where programs are written as [MIDI](https://en.wikipedia.org/wiki/MIDI) files.
 
 This repository contains:
-- The programming language's interpreter
+- The programming language interpreter
 - Transpilers between Schoenberg and
   [brainfuck](https://esolangs.org/wiki/Brainfuck) programs
 - [Sample programs and their generated audio files](./samples)
