@@ -7,7 +7,11 @@ for file in "$path"/*.b; do
 
     midi_path="$path"/$(basename "$file" .b).mid
     [ -f "$midi_path" ] || cat "$file" | cargo run from-bf > "$midi_path"
+done
 
-    ogg_path="$path"/$(basename "$file" .b).ogg
-    [ -f "$ogg_path" ] || timidity "$midi_path"
+for file in "$path"/*.mid; do
+    [ -f "$file" ] || continue
+
+    ogg_path="$path"/$(basename "$file" .mid).ogg
+    [ -f "$ogg_path" ] || timidity "$file"
 done

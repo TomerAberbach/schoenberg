@@ -24,7 +24,7 @@ impl Program {
 
     /// Runs the program with the given `input` and yields the output.
     pub fn run(&self, input: &str, output: impl Fn(u8)) {
-        let input = input.as_bytes();
+        let input: &[u8] = input.as_bytes();
         let mut input_pointer = 0;
 
         let mut memory = [0u8; Self::MEMORY_SIZE];
@@ -144,13 +144,12 @@ impl Program {
         let mut tokens = Vec::new();
 
         let mut keys_on: IndexSet<u7> = IndexSet::new();
-        let mut last_event_was_on = false;
-        let mut last_keys_on: HashSet<u7> = HashSet::new();
+        let mut last_key_on: Option<u7> = None;
         let mut loop_keys_on: HashSet<u7> = HashSet::new();
 
         for note_event in Self::extract_note_events(track) {
             match note_event {
-                NoteEvent::On { delta, key, vel } => {
+                NoteEvent::On { key, vel } => {
                     if keys_on.insert(key) && keys_on.len() >= 2 + loop_keys_on.len() {
                         if let Some(&loop_key) =
                             keys_on.iter().find(|key| !loop_keys_on.contains(key))
@@ -160,14 +159,8 @@ impl Program {
                         }
                     }
 
-                    // If there's not just one last key, because multiple keys
-                    // were pressed at exactly the same time (delta=0), then we
-                    // consider the distance to the new key to be the shortest
-                    // one.
-                    let distance = last_keys_on
-                        .iter()
-                        .map(|&last_key| pitch_class_distance(key, last_key))
-                        .min()
+                    let distance = last_key_on
+                        .map(|last_key| pitch_class_distance(key, last_key))
                         .unwrap_or(0);
                     match distance {
                         0 => {}
@@ -180,18 +173,13 @@ impl Program {
                         _ => panic!("Impossible note distance"),
                     };
 
-                    if !last_event_was_on || delta > 0 {
-                        last_keys_on.clear();
-                    }
-                    last_keys_on.insert(key);
-                    last_event_was_on = true;
+                    last_key_on = Some(key);
                 }
                 NoteEvent::Off { key } => {
                     keys_on.shift_remove(&key);
                     if loop_keys_on.remove(&key) {
                         tokens.push(Token::LoopEnd);
                     }
-                    last_event_was_on = false;
                 }
             }
         }
@@ -202,8 +190,9 @@ impl Program {
     /// Extracts the notes from the given `track` and returns them as a vector
     /// of [NoteEvent]s.
     ///
-    /// Sorts adjacent note offs before note ons when they are at the same exact
-    /// delta, so that the order of note offs and note ons is deterministic.
+    /// When they are at the same exact delta, sorts:
+    /// - Adjacent note offs before note ons
+    /// - Adjacent note offs/ons in ascending order
     fn extract_note_events(track: &Track) -> Vec<NoteEvent> {
         let mut notes = Vec::new();
         let mut note_offs = Vec::new();
@@ -216,17 +205,22 @@ impl Program {
             };
 
             if event.delta > 0 {
+                note_offs.sort_by_key(|event| match event {
+                    NoteEvent::Off { key } => *key,
+                    NoteEvent::On { .. } => panic!("Impossible"),
+                });
                 notes.append(&mut note_offs);
+
+                note_ons.sort_by_key(|event| match event {
+                    NoteEvent::Off { .. } => panic!("Impossible"),
+                    NoteEvent::On { key, .. } => *key,
+                });
                 notes.append(&mut note_ons);
             }
 
             match message {
                 MidiMessage::NoteOff { key, .. } => note_offs.push(NoteEvent::Off { key }),
-                MidiMessage::NoteOn { key, vel } => note_ons.push(NoteEvent::On {
-                    delta: event.delta,
-                    key,
-                    vel,
-                }),
+                MidiMessage::NoteOn { key, vel } => note_ons.push(NoteEvent::On { key, vel }),
                 _ => {}
             }
         }
@@ -292,7 +286,7 @@ impl Program {
 /// A struct representing the event of pressing or releasing a note.
 enum NoteEvent {
     Off { key: u7 },
-    On { delta: u28, key: u7, vel: u7 },
+    On { key: u7, vel: u7 },
 }
 
 /// Calculates the pitch class distance between two keys.
