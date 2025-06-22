@@ -20,6 +20,8 @@
 Schoenberg is an
 [esoteric programming language](https://en.wikipedia.org/wiki/Esoteric_programming_language)
 where programs are written as [MIDI](https://en.wikipedia.org/wiki/MIDI) files.
+A MIDI file is basically digital sheet music that tells a computer which notes
+to play when and how loudly.
 
 This repository contains:
 - The programming language interpreter
