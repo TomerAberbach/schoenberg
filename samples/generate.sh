@@ -12,6 +12,6 @@ done
 for file in "$path"/*.mid; do
     [ -f "$file" ] || continue
 
-    ogg_path="$path"/$(basename "$file" .mid).ogg
-    [ -f "$ogg_path" ] || timidity "$file"
+    mp3_path="$path"/$(basename "$file" .mid).mp3
+    [ -f "$mp3_path" ] || timidity -Ow -o - "$file" | ffmpeg -i - -vn -acodec libmp3lame -ab 192k "$mp3_path"
 done
